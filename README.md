@@ -3,8 +3,9 @@
 Gespräche aufnehmen, mit Sprechererkennung transkribieren und als Protokoll auswerten:
 Zusammenfassung, Entscheidungen, Terminplan und eine Follow-up-Tabelle – zum Versenden per E-Mail und zum Speichern.
 
-Notetaker ist eine Web-App, die sich auf dem iPhone und auf dem Mac wie eine App installieren lässt. Es gibt keinen eigenen Server:
-Aufnahmen und Protokolle liegen im Browser des jeweiligen Geräts; Audio geht nur zur Transkription an OpenAI, das Transkript nur zur Zusammenfassung an Anthropic.
+Notetaker ist eine Web-App, die sich auf dem iPhone und auf dem Mac wie eine App installieren lässt.
+Mit einem Konto (Supabase) werden Gespräche, Aufnahmen und das Stimmprofil zwischen den Geräten abgeglichen, und die API-Schlüssel
+liegen auf dem Server statt auf dem Gerät. Ohne Konto arbeitet die App rein lokal mit eigenen Schlüsseln.
 
 ## Funktionen
 
@@ -21,18 +22,24 @@ Aufnahmen und Protokolle liegen im Browser des jeweiligen Geräts; Audio geht nu
 
 ## Einrichtung
 
-1. In den Einstellungen zwei API-Schlüssel eintragen: [OpenAI](https://platform.openai.com/api-keys) für die Transkription und
-   [Anthropic](https://console.anthropic.com/settings/keys) für die Zusammenfassung. Beide Dienste rechnen nach Verbrauch ab.
-2. Namen eintragen und das Stimmprofil aufnehmen.
-3. Installieren: auf dem iPhone in Safari über „Teilen → Zum Home-Bildschirm“, auf dem Mac in Safari über „Ablage → Zum Dock hinzufügen“
-   (in Chrome über das Installieren-Symbol in der Adresszeile).
+### Supabase (Konto, Abgleich, Schlüssel)
 
-## Bereitstellung
+1. Schema einspielen: `supabase/migrations/` (Tabellen `meetings` und `profiles`, privater Speicher-Bucket `audio`, alles nur für den jeweiligen Besitzer lesbar).
+2. Funktionen bereitstellen: `supabase/functions/transcribe` und `supabase/functions/anthropic`. Sie reichen Anfragen an OpenAI bzw. Anthropic weiter und fügen den Schlüssel hinzu.
+3. Unter *Edge Functions → Secrets* drei Werte setzen: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` und `ALLOWED_EMAILS`
+   (kommagetrennte Liste der E-Mail-Adressen, die auswerten dürfen – ohne diese Liste ist niemand freigeschaltet, denn registrieren kann sich jeder).
+4. In der App unter Einstellungen registrieren, die Bestätigungs-E-Mail öffnen und anmelden.
 
-Die App braucht eine HTTPS-Adresse und wird über Cloudflare Pages veröffentlicht (funktioniert auch mit privatem Repository):
-im Cloudflare-Dashboard unter *Workers & Pages → Create → Pages → Connect to Git* dieses Repository wählen,
-Build command `npm run build`, Build output directory `dist`. Danach wird jeder Push auf `main` automatisch veröffentlicht.
-Der Code enthält keine Schlüssel.
+### Cloudflare Pages (Hosting)
+
+Im Cloudflare-Dashboard unter *Workers & Pages → Create → Pages → Connect to Git* dieses Repository wählen,
+Build command `npm run build`, Build output directory `dist`, dazu die Umgebungsvariablen `VITE_SUPABASE_URL` und `VITE_SUPABASE_KEY`
+(Projekt-URL und Publishable Key – beide sind öffentlich). Danach wird jeder Push auf `main` automatisch veröffentlicht.
+
+### Auf den Geräten
+
+Namen eintragen und das Stimmprofil aufnehmen (wird mit dem Konto abgeglichen). Installieren: auf dem iPhone in Safari über
+„Teilen → Zum Home-Bildschirm“, auf dem Mac in Safari über „Ablage → Zum Dock hinzufügen“ (in Chrome über das Installieren-Symbol in der Adresszeile).
 
 ## Entwicklung
 
@@ -54,5 +61,5 @@ npm run build
   während der Aufnahme bitte nicht wechseln.
 - Sprecher bleiben über die 8-Minuten-Teile hinweg für bis zu vier Personen zugeordnet; bei größeren Runden kann die Nummerierung
   weiterer Sprecher zwischen den Teilen wechseln.
-- Es gibt keine automatische Synchronisierung zwischen Geräten. Protokolle lassen sich per Backup (Einstellungen) übertragen.
+- Der Abgleich läuft beim Öffnen der App und beim Zurückwechseln zu ihr, nicht in Echtzeit. Bei gleichzeitiger Bearbeitung auf zwei Geräten gewinnt die neuere Änderung.
 - Vor der Aufnahme das Einverständnis aller Beteiligten einholen – das Aufzeichnen von Gesprächen ohne Zustimmung ist in Deutschland strafbar (§ 201 StGB).

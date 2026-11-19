@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { deleteAudio, deleteMeeting, getMeeting, listMeetings, putAudio, putMeeting } from "./lib/db";
+import * as cloud from "./lib/cloud";
+import { deleteAudio, deleteMeeting, getMeeting, hasLocalAudio, listMeetings, putAudio, putMeeting, sync } from "./lib/db";
 import { copyRich, download, exportFiles, fmtDate, mailtoUrl, share } from "./lib/export";
 import { Recorder } from "./lib/recorder";
 import { loadSettings, saveSettings } from "./lib/settings";
@@ -37,28 +38,58 @@ const STATUS: Record<Meeting["status"], string> = {
 export default function App() {
   const [view, setView] = useState<View>({ name: "home" });
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [account, setAccount] = useState<string | null>(null);
+  const [rev, setRev] = useState(0); // bumped whenever a sync may have changed local data
+  const pushTimer = useRef<number>(undefined);
+
   const updateSettings = (s: Settings) => {
+    s = { ...s, updatedAt: Date.now() };
     setSettings(s);
     saveSettings(s);
+    // Name, voice sample etc. follow the account; wait until typing has stopped.
+    clearTimeout(pushTimer.current);
+    if (cloud.signedIn()) pushTimer.current = window.setTimeout(() => cloud.pushProfile(s).catch(() => {}), 1500);
   };
 
-  if (view.name === "settings") return <SettingsView settings={settings} onChange={updateSettings} onBack={() => setView({ name: "home" })} />;
+  useEffect(() => cloud.onAuth(setAccount), []);
+  useEffect(() => {
+    if (!account) return;
+    const refresh = () => sync().catch(() => {}).then(() => setRev((r) => r + 1));
+    const onVisible = () => document.visibilityState === "visible" && refresh();
+    refresh();
+    cloud.fetchProfile().then((remote) => {
+      const local = loadSettings();
+      if (remote && (remote.updatedAt ?? 0) > (local.updatedAt ?? 0)) {
+        const merged = { ...local, ...remote };
+        setSettings(merged);
+        saveSettings(merged);
+      } else if (!remote || (local.updatedAt ?? 0) > (remote.updatedAt ?? 0)) {
+        cloud.pushProfile({ ...local, updatedAt: local.updatedAt ?? Date.now() }).catch(() => {});
+      }
+    }).catch(() => {});
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [account]);
+
+  if (view.name === "settings")
+    return <SettingsView settings={settings} account={account} onChange={updateSettings} onBack={() => setView({ name: "home" })} />;
   if (view.name === "record")
     return <RecordView settings={settings} system={view.system} onDone={(id) => setView(id ? { name: "meeting", id } : { name: "home" })} />;
-  if (view.name === "meeting") return <MeetingView id={view.id} settings={settings} onBack={() => setView({ name: "home" })} />;
-  return <Home settings={settings} go={setView} />;
+  if (view.name === "meeting")
+    return <MeetingView id={view.id} settings={settings} account={account} rev={rev} onBack={() => setView({ name: "home" })} />;
+  return <Home settings={settings} account={account} rev={rev} go={setView} />;
 }
 
-function Home({ settings, go }: { settings: Settings; go: (v: View) => void }) {
+function Home({ settings, account, rev, go }: { settings: Settings; account: string | null; rev: number; go: (v: View) => void }) {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [system, setSystem] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     listMeetings().then(setMeetings);
-  }, []);
+  }, [rev]);
   // Capturing another app's audio only works in desktop browsers.
   const canSystem = !!navigator.mediaDevices?.getDisplayMedia && !/iPhone|iPad|Android/i.test(navigator.userAgent);
-  const missingKeys = !settings.openaiKey || !settings.anthropicKey;
+  const missingKeys = !account && (!settings.openaiKey || !settings.anthropicKey);
 
   const importFile = async (file: File | undefined) => {
     if (!file) return;
@@ -83,7 +114,7 @@ function Home({ settings, go }: { settings: Settings; go: (v: View) => void }) {
       </header>
       {missingKeys && (
         <p className="notice">
-          Für Transkription und Zusammenfassung fehlen noch API-Schlüssel.{" "}
+          {cloud.supabase ? "Bitte anmelden, damit Gespräche ausgewertet und zwischen Ihren Geräten abgeglichen werden." : "Für Transkription und Zusammenfassung fehlen noch API-Schlüssel."}{" "}
           <a href="#" onClick={(e) => (e.preventDefault(), go({ name: "settings" }))}>Jetzt einrichten</a>
         </p>
       )}
@@ -225,7 +256,7 @@ function RecordView({ settings, system, onDone }: { settings: Settings; system: 
 
 const TABS = ["Übersicht", "Entscheidungen", "Termine", "Follow-ups", "Transkript"] as const;
 
-function MeetingView({ id, settings, onBack }: { id: string; settings: Settings; onBack: () => void }) {
+function MeetingView({ id, settings, account, rev, onBack }: { id: string; settings: Settings; account: string | null; rev: number; onBack: () => void }) {
   const [m, setM] = useState<Meeting | null>(null);
   const [tab, setTab] = useState<(typeof TABS)[number]>("Übersicht");
   const [progress, setProgress] = useState("");
@@ -241,8 +272,8 @@ function MeetingView({ id, settings, onBack }: { id: string; settings: Settings;
   const process = useCallback(
     async (meeting: Meeting, redoTranscript: boolean) => {
       if (running.current) return;
-      if (!settings.openaiKey || !settings.anthropicKey)
-        return save({ ...meeting, status: "error", error: "API-Schlüssel fehlen. Bitte in den Einstellungen eintragen." });
+      if (!account && (!settings.openaiKey || !settings.anthropicKey))
+        return save({ ...meeting, status: "error", error: cloud.supabase ? "Bitte in den Einstellungen anmelden." : "API-Schlüssel fehlen. Bitte in den Einstellungen eintragen." });
       running.current = true;
       const cur = { ...meeting, error: undefined };
       try {
@@ -264,17 +295,19 @@ function MeetingView({ id, settings, onBack }: { id: string; settings: Settings;
         setProgress("");
       }
     },
-    [settings, save]
+    [settings, account, save]
   );
 
   useEffect(() => {
-    getMeeting(id).then((meeting) => {
+    if (running.current) return; // our own run is the newest state; don't overwrite it with a synced copy
+    getMeeting(id).then(async (meeting) => {
       if (!meeting) return onBack();
       setM(meeting);
-      // Fresh recording, or a run that was interrupted by closing the app.
-      if (meeting.status !== "done" && meeting.status !== "error") process(meeting, false);
+      // Fresh recording, or a run that was interrupted by closing the app. Only where the
+      // audio was recorded: another device showing the same meeting must not start a second run.
+      if (meeting.status !== "done" && meeting.status !== "error" && (await hasLocalAudio(id, 0))) process(meeting, false);
     });
-  }, [id, onBack, process]);
+  }, [id, rev, onBack, process]);
 
   if (!m) return <main />;
   const s = m.summary;
@@ -300,6 +333,11 @@ function MeetingView({ id, settings, onBack }: { id: string; settings: Settings;
         </p>
       )}
       {busy && <div className="spinner" />}
+      {m.status !== "done" && m.status !== "error" && !running.current && !!m.segments.length && (
+        <p className="notice">
+          Die Auswertung läuft möglicherweise auf einem anderen Gerät. <button onClick={() => process(m, false)}>Hier auswerten</button>
+        </p>
+      )}
 
       {s && (
         <>

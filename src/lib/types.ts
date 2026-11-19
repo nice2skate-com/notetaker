@@ -60,6 +60,7 @@ export interface Meeting {
   speakerNames: Record<string, string>; // label -> display name
   summary?: Summary;
   done: Record<number, boolean>; // follow-up index -> erledigt
+  updatedAt?: number; // ms; used to decide which device has the newer version
 }
 
 export interface Settings {
@@ -71,4 +72,5 @@ export interface Settings {
   micId: string;
   mode: "room" | "headset";
   emailTo: string;
+  updatedAt?: number;
 }
