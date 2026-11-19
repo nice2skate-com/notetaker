@@ -1,0 +1,434 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { deleteAudio, deleteMeeting, getMeeting, listMeetings, putAudio, putMeeting } from "./lib/db";
+import { copyRich, download, exportFiles, fmtDate, mailtoUrl, share } from "./lib/export";
+import { Recorder } from "./lib/recorder";
+import { loadSettings, saveSettings } from "./lib/settings";
+import { summarize } from "./lib/summarize";
+import { MAX_UPLOAD_BYTES, transcribeMeeting } from "./lib/transcribe";
+import type { Meeting, Settings } from "./lib/types";
+import SettingsView from "./SettingsView";
+
+type View = { name: "home" } | { name: "record"; system: boolean } | { name: "meeting"; id: string } | { name: "settings" };
+
+const dur = (ms: number) => {
+  const s = Math.floor(ms / 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}` : `${p(Math.floor(s / 60))}:${p(s % 60)}`;
+};
+const newMeeting = (): Meeting => ({
+  id: crypto.randomUUID(),
+  title: "Gespräch vom " + new Date().toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }),
+  createdAt: Date.now(),
+  durationMs: 0,
+  status: "recorded",
+  context: "",
+  segments: [],
+  speakerNames: {},
+  done: {},
+});
+const STATUS: Record<Meeting["status"], string> = {
+  recorded: "Aufgenommen",
+  transcribing: "Wird transkribiert …",
+  summarizing: "Wird zusammengefasst …",
+  done: "Fertig",
+  error: "Fehler",
+};
+
+export default function App() {
+  const [view, setView] = useState<View>({ name: "home" });
+  const [settings, setSettings] = useState<Settings>(loadSettings);
+  const updateSettings = (s: Settings) => {
+    setSettings(s);
+    saveSettings(s);
+  };
+
+  if (view.name === "settings") return <SettingsView settings={settings} onChange={updateSettings} onBack={() => setView({ name: "home" })} />;
+  if (view.name === "record")
+    return <RecordView settings={settings} system={view.system} onDone={(id) => setView(id ? { name: "meeting", id } : { name: "home" })} />;
+  if (view.name === "meeting") return <MeetingView id={view.id} settings={settings} onBack={() => setView({ name: "home" })} />;
+  return <Home settings={settings} go={setView} />;
+}
+
+function Home({ settings, go }: { settings: Settings; go: (v: View) => void }) {
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [system, setSystem] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    listMeetings().then(setMeetings);
+  }, []);
+  // Capturing another app's audio only works in desktop browsers.
+  const canSystem = !!navigator.mediaDevices?.getDisplayMedia && !/iPhone|iPad|Android/i.test(navigator.userAgent);
+  const missingKeys = !settings.openaiKey || !settings.anthropicKey;
+
+  const importFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) return setError("Die Datei ist größer als 25 MB. Bitte kürzen oder stärker komprimieren.");
+    const durationMs = await new Promise<number>((resolve) => {
+      const a = new Audio(URL.createObjectURL(file));
+      a.onloadedmetadata = () => resolve(isFinite(a.duration) ? a.duration * 1000 : 0);
+      a.onerror = () => resolve(0);
+    });
+    const m = { ...newMeeting(), title: file.name.replace(/\.[^.]+$/, ""), durationMs };
+    m.segments = [{ idx: 0, durationMs, mime: file.type }];
+    await putAudio(m.id, 0, file);
+    await putMeeting(m);
+    go({ name: "meeting", id: m.id });
+  };
+
+  return (
+    <main>
+      <header>
+        <h1>Notetaker</h1>
+        <button className="ghost" onClick={() => go({ name: "settings" })}>Einstellungen</button>
+      </header>
+      {missingKeys && (
+        <p className="notice">
+          Für Transkription und Zusammenfassung fehlen noch API-Schlüssel.{" "}
+          <a href="#" onClick={(e) => (e.preventDefault(), go({ name: "settings" }))}>Jetzt einrichten</a>
+        </p>
+      )}
+      {error && <p className="notice error">{error}</p>}
+      <section className="card center">
+        <button className="rec" onClick={() => go({ name: "record", system })} aria-label="Aufnahme starten">
+          <span />
+        </button>
+        <p className="muted">Aufnahme starten</p>
+        {canSystem && (
+          <label className="check">
+            <input type="checkbox" checked={system} onChange={(e) => setSystem(e.target.checked)} />
+            Online-Meeting: zusätzlich den Ton des Computers aufnehmen
+          </label>
+        )}
+        <label className="link">
+          Audiodatei importieren
+          <input type="file" accept="audio/*,video/mp4,.m4a,.mp3,.wav,.webm" hidden onChange={(e) => importFile(e.target.files?.[0])} />
+        </label>
+      </section>
+      <h2>Gespräche</h2>
+      {!meetings.length && <p className="muted">Noch keine Aufnahmen.</p>}
+      <ul className="list">
+        {meetings.map((m) => (
+          <li key={m.id} onClick={() => go({ name: "meeting", id: m.id })}>
+            <div>
+              <strong>{m.title}</strong>
+              <span className="muted">
+                {new Date(m.createdAt).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" })} · {dur(m.durationMs)}
+              </span>
+            </div>
+            <span className={"badge " + m.status}>{STATUS[m.status]}</span>
+          </li>
+        ))}
+      </ul>
+    </main>
+  );
+}
+
+function RecordView({ settings, system, onDone }: { settings: Settings; system: boolean; onDone: (id?: string) => void }) {
+  const [elapsed, setElapsed] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [level, setLevel] = useState(0);
+  const [hint, setHint] = useState("");
+  const [error, setError] = useState("");
+  const [context, setContext] = useState("");
+  const [stopping, setStopping] = useState(false);
+  const rec = useRef<Recorder | null>(null);
+  const meeting = useRef<Meeting>(newMeeting());
+
+  useEffect(() => {
+    let quietSince = 0;
+    let lastClip = 0;
+    const m = meeting.current;
+    const r = new Recorder({
+      settings,
+      withSystemAudio: system,
+      onSegment: async ({ blob, durationMs }) => {
+        const idx = m.segments.length;
+        await putAudio(m.id, idx, blob);
+        m.segments.push({ idx, durationMs, mime: blob.type });
+        m.durationMs += durationMs;
+        await putMeeting(m);
+      },
+      onLevel: (rms, peak) => {
+        setLevel(Math.min(1, rms * 6));
+        const now = performance.now();
+        if (peak > 0.98) lastClip = now;
+        if (rms > 0.01) quietSince = now;
+        setHint(
+          now - lastClip < 2000
+            ? "Übersteuert – etwas mehr Abstand zum Mikrofon."
+            : now - quietSince > 6000
+              ? "Sehr leise – Mikrofon näher an die Sprechenden legen."
+              : ""
+        );
+      },
+    });
+    rec.current = r;
+    r.start().catch((e: Error) =>
+      setError(e.name === "NotAllowedError" ? "Kein Zugriff auf das Mikrofon. Bitte in den Browser-Einstellungen erlauben." : e.message)
+    );
+    const t = setInterval(() => setElapsed(r.elapsedMs()), 250);
+    return () => {
+      clearInterval(t);
+      r.stop();
+    };
+  }, [settings, system]);
+
+  const stop = async () => {
+    setStopping(true);
+    await rec.current?.stop();
+    const m = meeting.current;
+    if (!m.segments.length) return onDone();
+    m.context = context;
+    await putMeeting(m);
+    onDone(m.id);
+  };
+
+  if (error)
+    return (
+      <main>
+        <p className="notice error">{error}</p>
+        <button onClick={() => onDone()}>Zurück</button>
+      </main>
+    );
+
+  return (
+    <main className="recording">
+      <p className={"state" + (paused ? "" : " live")}>{paused ? "Pausiert" : "Aufnahme läuft"}</p>
+      <p className="timer">{dur(elapsed)}</p>
+      <div className="meter" role="img" aria-label="Pegel">
+        <div style={{ width: `${(paused ? 0 : level) * 100}%` }} />
+      </div>
+      <p className="hint">{hint || " "}</p>
+      <textarea
+        placeholder="Optional: Thema, Teilnehmer, Namen – hilft bei der Zusammenfassung"
+        value={context}
+        onChange={(e) => setContext(e.target.value)}
+        rows={3}
+      />
+      <div className="row">
+        <button
+          onClick={() => {
+            paused ? rec.current?.resume() : rec.current?.pause();
+            setPaused(!paused);
+          }}
+        >
+          {paused ? "Fortsetzen" : "Pause"}
+        </button>
+        <button className="primary" onClick={stop} disabled={stopping}>
+          Beenden &amp; auswerten
+        </button>
+      </div>
+      <p className="muted small">Bitte die App geöffnet und den Bildschirm an lassen – im Hintergrund stoppt der Browser die Aufnahme.</p>
+    </main>
+  );
+}
+
+const TABS = ["Übersicht", "Entscheidungen", "Termine", "Follow-ups", "Transkript"] as const;
+
+function MeetingView({ id, settings, onBack }: { id: string; settings: Settings; onBack: () => void }) {
+  const [m, setM] = useState<Meeting | null>(null);
+  const [tab, setTab] = useState<(typeof TABS)[number]>("Übersicht");
+  const [progress, setProgress] = useState("");
+  const [toast, setToast] = useState("");
+  const [to, setTo] = useState(settings.emailTo);
+  const running = useRef(false);
+
+  const save = useCallback((next: Meeting) => {
+    setM({ ...next });
+    return putMeeting(next);
+  }, []);
+
+  const process = useCallback(
+    async (meeting: Meeting, redoTranscript: boolean) => {
+      if (running.current) return;
+      if (!settings.openaiKey || !settings.anthropicKey)
+        return save({ ...meeting, status: "error", error: "API-Schlüssel fehlen. Bitte in den Einstellungen eintragen." });
+      running.current = true;
+      const cur = { ...meeting, error: undefined };
+      try {
+        if (redoTranscript || !cur.transcript) {
+          await save(Object.assign(cur, { status: "transcribing" }));
+          cur.transcript = await transcribeMeeting(cur, settings, (d, t) => setProgress(t > 1 ? `Teil ${Math.min(d + 1, t)} von ${t}` : ""));
+          setProgress("");
+          if (!cur.transcript.length) throw new Error("In der Aufnahme wurde keine Sprache erkannt.");
+        }
+        await save(Object.assign(cur, { status: "summarizing" }));
+        const summary = await summarize(cur, settings);
+        for (const s of summary.speaker_names) if (s.name && cur.transcript!.some((u) => u.speaker === s.label)) cur.speakerNames[s.label] ??= s.name;
+        if (cur.title.startsWith("Gespräch vom ") && summary.title) cur.title = summary.title;
+        await save(Object.assign(cur, { summary, status: "done", done: {} }));
+      } catch (e) {
+        await save(Object.assign(cur, { status: "error", error: (e as Error).message }));
+      } finally {
+        running.current = false;
+        setProgress("");
+      }
+    },
+    [settings, save]
+  );
+
+  useEffect(() => {
+    getMeeting(id).then((meeting) => {
+      if (!meeting) return onBack();
+      setM(meeting);
+      // Fresh recording, or a run that was interrupted by closing the app.
+      if (meeting.status !== "done" && meeting.status !== "error") process(meeting, false);
+    });
+  }, [id, onBack, process]);
+
+  if (!m) return <main />;
+  const s = m.summary;
+  const busy = m.status === "transcribing" || m.status === "summarizing";
+  const name = (label: string) => m.speakerNames[label] || label;
+  const speakers = [...new Set(m.transcript?.map((u) => u.speaker))];
+  const flash = (t: string) => (setToast(t), setTimeout(() => setToast(""), 2500));
+  const when = (iso: string, time: string, text: string) => [fmtDate(iso) || text, time].filter(Boolean).join(", ") || "offen";
+
+  return (
+    <main>
+      <header>
+        <button className="ghost" onClick={onBack}>‹ Zurück</button>
+        <span className={"badge " + m.status}>{STATUS[m.status]} {progress}</span>
+      </header>
+      <input className="title" value={m.title} onChange={(e) => save({ ...m, title: e.target.value })} aria-label="Titel" />
+      <p className="muted">
+        {new Date(m.createdAt).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })} · {dur(m.durationMs)}
+      </p>
+      {m.status === "error" && (
+        <p className="notice error">
+          {m.error} <button onClick={() => process(m, false)}>Erneut versuchen</button>
+        </p>
+      )}
+      {busy && <div className="spinner" />}
+
+      {s && (
+        <>
+          <nav className="tabs">
+            {TABS.map((t) => (
+              <button key={t} className={t === tab ? "active" : ""} onClick={() => setTab(t)}>
+                {t}
+                {t === "Entscheidungen" && ` (${s.decisions.length})`}
+                {t === "Termine" && ` (${s.schedule.length})`}
+                {t === "Follow-ups" && ` (${s.follow_ups.length})`}
+              </button>
+            ))}
+          </nav>
+
+          {tab === "Übersicht" && (
+            <section>
+              <p>{s.overview}</p>
+              {!!s.key_points.length && <h3>Kernpunkte</h3>}
+              <ul>{s.key_points.map((p, i) => <li key={i}>{p}</li>)}</ul>
+              {!!s.open_questions.length && <h3>Offene Fragen</h3>}
+              <ul>{s.open_questions.map((p, i) => <li key={i}>{p}</li>)}</ul>
+            </section>
+          )}
+
+          {tab === "Entscheidungen" && (
+            <section>
+              {!s.decisions.length && <p className="muted">Keine Entscheidungen festgehalten.</p>}
+              {s.decisions.map((d, i) => (
+                <div className="card" key={i}>
+                  <strong>{d.decision}</strong>
+                  {d.rationale && <p>{d.rationale}</p>}
+                  {d.owner && <p className="muted">Verantwortlich: {d.owner}</p>}
+                </div>
+              ))}
+            </section>
+          )}
+
+          {tab === "Termine" && (
+            <section className="scroll">
+              {!s.schedule.length && <p className="muted">Keine Termine genannt.</p>}
+              {!!s.schedule.length && (
+                <table>
+                  <thead><tr><th>Wann</th><th>Was</th><th>Wer</th><th>Hinweis</th></tr></thead>
+                  <tbody>
+                    {s.schedule.map((t, i) => (
+                      <tr key={i}><td className="nowrap" data-l="Wann">{when(t.date, t.time, t.date_text)}</td><td data-l="Was">{t.title}</td><td data-l="Wer">{t.participants}</td><td data-l="Hinweis">{t.notes}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+          )}
+
+          {tab === "Follow-ups" && (
+            <section className="scroll">
+              {!s.follow_ups.length && <p className="muted">Keine Aufgaben festgehalten.</p>}
+              {!!s.follow_ups.length && (
+                <table>
+                  <thead><tr><th></th><th>Aufgabe</th><th>Verantwortlich</th><th>Fällig</th><th>Priorität</th></tr></thead>
+                  <tbody>
+                    {s.follow_ups.map((f, i) => (
+                      <tr key={i} className={m.done[i] ? "done" : ""}>
+                        <td>
+                          <input type="checkbox" checked={!!m.done[i]} aria-label="Erledigt"
+                            onChange={(e) => save({ ...m, done: { ...m.done, [i]: e.target.checked } })} />
+                        </td>
+                        <td data-l="Aufgabe">{f.task}</td><td data-l="Verantwortlich">{f.owner}</td>
+                        <td className="nowrap" data-l="Fällig">{when(f.due_date, "", f.due_text)}</td>
+                        <td data-l="Priorität"><span className={"prio " + f.priority}>{f.priority}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+          )}
+        </>
+      )}
+
+      {(tab === "Transkript" || !s) && !!m.transcript?.length && (
+        <section>
+          <div className="speakers">
+            {speakers.map((sp) => (
+              <label key={sp}>
+                <span className="muted small">{sp}</span>
+                <input value={m.speakerNames[sp] ?? ""} placeholder="Name eintragen"
+                  onChange={(e) => save({ ...m, speakerNames: { ...m.speakerNames, [sp]: e.target.value } })} />
+              </label>
+            ))}
+          </div>
+          {m.transcript.map((u, i) => (
+            <p key={i} className="utt">
+              <span className="muted small">{dur(u.start * 1000)}</span> <strong>{name(u.speaker)}:</strong> {u.text}
+            </p>
+          ))}
+        </section>
+      )}
+
+      {s && (
+        <footer className="actions">
+          <h3>Versenden &amp; speichern</h3>
+          <div className="row">
+            <input type="email" placeholder="empfaenger@firma.de" value={to} onChange={(e) => setTo(e.target.value)} />
+            <a className="button primary" href={mailtoUrl(m, to)}>E-Mail</a>
+          </div>
+          <div className="row wrap">
+            {!!navigator.share && (
+              <button onClick={async () => (await share(m)) || flash("Teilen wird hier nicht unterstützt.")}>Teilen mit Anhängen</button>
+            )}
+            <button onClick={() => copyRich(m).then(() => flash("Kopiert – mit Tabellen einfügbar."))}>Kopieren</button>
+            <button onClick={() => exportFiles(m).forEach(download)}>Dateien speichern</button>
+          </div>
+          <p className="muted small">Gespeichert werden das Protokoll (HTML, als PDF druckbar), die Follow-ups (CSV für Excel) und die Termine (ICS für den Kalender).</p>
+        </footer>
+      )}
+
+      {!busy && (
+        <div className="row wrap danger-zone">
+          {m.transcript && <button onClick={() => process(m, false)}>Neu zusammenfassen</button>}
+          {m.transcript && !!m.segments.length && <button onClick={() => process(m, true)}>Neu transkribieren</button>}
+          {!!m.segments.length && m.status === "done" && (
+            <button onClick={() => confirm("Audio löschen? Protokoll und Transkript bleiben erhalten.") && deleteAudio(m).then(() => save({ ...m, segments: [] }))}>
+              Audio löschen
+            </button>
+          )}
+          <button className="danger" onClick={() => confirm("Gespräch endgültig löschen?") && deleteMeeting(m).then(onBack)}>Löschen</button>
+        </div>
+      )}
+      {toast && <div className="toast">{toast}</div>}
+    </main>
+  );
+}
