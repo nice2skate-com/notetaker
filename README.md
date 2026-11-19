@@ -29,10 +29,10 @@ Aufnahmen und Protokolle liegen im Browser des jeweiligen Geräts; Audio geht nu
 
 ## Bereitstellung
 
-Die App braucht eine HTTPS-Adresse. Der mitgelieferte Workflow `.github/workflows/deploy.yml` veröffentlicht sie bei jedem Push auf `main`
-über GitHub Pages (im Repository unter *Settings → Pages → Source: GitHub Actions* aktivieren; bei kostenlosen GitHub-Konten muss das
-Repository dafür öffentlich sein). Der Code enthält keine Schlüssel. Jeder andere statische Hoster (Netlify, Vercel, Cloudflare Pages)
-funktioniert ebenso mit `npm run build` und dem Ordner `dist`.
+Die App braucht eine HTTPS-Adresse und wird über Cloudflare Pages veröffentlicht (funktioniert auch mit privatem Repository):
+im Cloudflare-Dashboard unter *Workers & Pages → Create → Pages → Connect to Git* dieses Repository wählen,
+Build command `npm run build`, Build output directory `dist`. Danach wird jeder Push auf `main` automatisch veröffentlicht.
+Der Code enthält keine Schlüssel.
 
 ## Entwicklung
 
