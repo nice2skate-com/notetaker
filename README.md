@@ -33,8 +33,8 @@ liegen auf dem Server statt auf dem Gerät. Ohne Konto arbeitet die App rein lok
 ### Cloudflare Pages (Hosting)
 
 Im Cloudflare-Dashboard unter *Workers & Pages → Create → Pages → Connect to Git* dieses Repository wählen,
-Build command `npm run build`, Build output directory `dist`, dazu die Umgebungsvariablen `VITE_SUPABASE_URL` und `VITE_SUPABASE_KEY`
-(Projekt-URL und Publishable Key – beide sind öffentlich). Danach wird jeder Push auf `main` automatisch veröffentlicht.
+Build command `npm run build`, Build output directory `dist`. Danach wird jeder Push auf `main` automatisch veröffentlicht.
+Projekt-URL und Publishable Key von Supabase stehen in `.env` (beide sind öffentlich); Umgebungsvariablen sind in Cloudflare nicht nötig.
 
 ### Auf den Geräten
 
