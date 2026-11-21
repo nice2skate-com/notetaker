@@ -10,13 +10,18 @@ export function fmtDate(iso: string): string {
 }
 const when = (iso: string, time: string, text: string) =>
   [fmtDate(iso) || text, time].filter(Boolean).join(", ") || "offen";
+/** "12 Min." for meetings, "0:23 Min." for short notes. */
+const length = (m: Meeting) => {
+  const sec = Math.round(m.durationMs / 1000);
+  return sec < 60 ? `0:${String(sec).padStart(2, "0")} Min.` : `${Math.round(sec / 60)} Min.`;
+};
 const meetingDate = (m: Meeting) =>
   new Date(m.createdAt).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" });
 
 /** Plain text / Markdown – used for e-mail bodies and .md download. */
 export function toMarkdown(m: Meeting, withTranscript = false): string {
   const s = m.summary;
-  const L: string[] = [`# ${m.title}`, `${meetingDate(m)} · Dauer ${Math.round(m.durationMs / 60000)} Min.`, ""];
+  const L: string[] = [`# ${m.title}`, `${meetingDate(m)} · Dauer ${length(m)}`, ""];
   if (s) {
     L.push("## Zusammenfassung", s.overview, "");
     if (s.key_points.length) L.push("## Kernpunkte", ...s.key_points.map((p) => `- ${p}`), "");
@@ -65,7 +70,7 @@ export function toHtml(m: Meeting, withTranscript = false): string {
       .join("")}</tbody></table>`;
   const H: string[] = [
     `<h1>${esc(m.title)}</h1>`,
-    `<p style="color:#64748b">${esc(meetingDate(m))} · Dauer ${Math.round(m.durationMs / 60000)} Min.</p>`,
+    `<p style="color:#64748b">${esc(meetingDate(m))} · Dauer ${length(m)}</p>`,
   ];
   if (s) {
     H.push(`<h2>Zusammenfassung</h2><p>${esc(s.overview)}</p>`);
@@ -169,7 +174,9 @@ export function mailtoUrl(m: Meeting, to: string): string {
     .replace(/^# /m, "")
     .replace(/^## (.*)$/gm, (_, h: string) => h.toUpperCase())
     .replace(/^- \[x\] /gm, "- (erledigt) ")
-    .replace(/^- \[ \] /gm, "- ");
+    .replace(/^- \[ \] /gm, "- ")
+    // Mail line breaks are CR+LF; web mailers such as Yahoo drop a bare LF and run everything together.
+    .replace(/\n/g, "\r\n");
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent("Protokoll: " + m.title)}&body=${encodeURIComponent(plain)}`;
 }
 
