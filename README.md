@@ -16,7 +16,7 @@ liegen auf dem Server statt auf dem Gerät. Ohne Konto arbeitet die App rein lok
   werden die eigenen Beiträge unter dem eigenen Namen geführt; andere Sprecher lassen sich im Transkript benennen.
 - **Protokoll** (Claude): Kurzfassung, Kernpunkte, Entscheidungen mit Begründung und Verantwortlichen, Terminplan, Follow-ups mit
   Verantwortlichen, Fälligkeit und Priorität, offene Fragen.
-- **Versenden und Speichern**: E-Mail-Entwurf im Mailprogramm, Teilen mit Anhängen (iPhone/Mac), Kopieren mit Tabellen,
+- **Versenden und Speichern**: gestaltete E-Mail direkt aus der App (mit Follow-ups als CSV und Terminen als ICS im Anhang), Teilen mit Anhängen (iPhone/Mac), Kopieren mit Tabellen,
   Dateien: Protokoll als HTML (als PDF druckbar), Follow-ups als CSV für Excel, Termine als ICS für den Kalender.
 - **Anhören**: Wiedergabe der Aufnahme mit Geschwindigkeitswahl; ein Tipp auf eine Zeitmarke im Transkript springt an die Stelle.
 - **Protokoll bearbeiten**: Zusammenfassung, Entscheidungen, Termine und Follow-ups von Hand korrigieren und ergänzen.
@@ -32,7 +32,10 @@ liegen auf dem Server statt auf dem Gerät. Ohne Konto arbeitet die App rein lok
 2. Funktionen bereitstellen: `supabase/functions/transcribe` und `supabase/functions/anthropic`. Sie reichen Anfragen an OpenAI bzw. Anthropic weiter und fügen den Schlüssel hinzu.
 3. Unter *Edge Functions → Secrets* drei Werte setzen: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` und `ALLOWED_EMAILS`
    (kommagetrennte Liste der E-Mail-Adressen, die auswerten dürfen – ohne diese Liste ist niemand freigeschaltet, denn registrieren kann sich jeder).
-4. In der App unter Einstellungen registrieren, die Bestätigungs-E-Mail öffnen und anmelden.
+4. Für den direkten E-Mail-Versand die Funktion `supabase/functions/send-mail` bereitstellen und die Zugangsdaten eines Postfachs als Secrets setzen:
+   `SMTP_USER` (Adresse des Postfachs) und `SMTP_PASS` (dessen Passwort). Voreingestellt ist Strato (`smtp.strato.de`, Port 465);
+   für andere Anbieter zusätzlich `SMTP_HOST` setzen. Der Server muss SSL auf Port 465 anbieten.
+5. In der App unter Einstellungen registrieren, die Bestätigungs-E-Mail öffnen und anmelden.
 
 ### Cloudflare Pages (Hosting)
 

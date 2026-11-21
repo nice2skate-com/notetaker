@@ -173,21 +173,41 @@ export function download(file: File) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-/**
- * Link that opens a new e-mail. A mail link can only carry plain text, and web mailers
- * (Yahoo, Gmail in the browser) even drop its line breaks, so by default the body stays
- * empty and the formatted protocol is pasted from the clipboard instead. `withBody` is the
- * fallback for when the clipboard is not available.
- */
-export function mailtoUrl(m: Meeting, to: string, withBody = false): string {
-  const plain = toMarkdown(m)
+/** Plain-text version for mail bodies: Markdown headings become capitalised lines, CR+LF line breaks. */
+export function toPlain(m: Meeting): string {
+  return toMarkdown(m)
     .replace(/^# /m, "")
     .replace(/^## (.*)$/gm, (_, h: string) => h.toUpperCase())
     .replace(/^- \[x\] /gm, "- (erledigt) ")
     .replace(/^- \[ \] /gm, "- ")
     .replace(/\n/g, "\r\n");
-  const body = withBody ? `&body=${encodeURIComponent(plain)}` : "";
+}
+
+/**
+ * Link that opens a new e-mail in the user's own mail program. A mail link can only carry
+ * plain text, and web mailers (Yahoo, Gmail in the browser) even drop its line breaks, so by
+ * default the body stays empty and the formatted protocol is pasted from the clipboard
+ * instead. `withBody` is the fallback for when the clipboard is not available.
+ */
+export function mailtoUrl(m: Meeting, to: string, withBody = false): string {
+  const body = withBody ? `&body=${encodeURIComponent(toPlain(m))}` : "";
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent("Protokoll: " + m.title)}${body}`;
+}
+
+/** Everything the server needs to send the protocol as a formatted e-mail with attachments. */
+export function mailPayload(m: Meeting, to: string[], withTranscript: boolean) {
+  const base = safeName(m);
+  const attachments = [];
+  if (m.summary?.follow_ups.length) attachments.push({ filename: `${base} Follow-ups.csv`, content: followUpsCsv(m), contentType: "text/csv; charset=utf-8" });
+  const ics = toIcs(m);
+  if (ics) attachments.push({ filename: `${base}.ics`, content: ics, contentType: "text/calendar; charset=utf-8" });
+  return {
+    to,
+    subject: "Protokoll: " + m.title,
+    html: toHtml(m, withTranscript),
+    text: withTranscript ? toMarkdown(m, true).replace(/\n/g, "\r\n") : toPlain(m),
+    attachments,
+  };
 }
 
 /** Share sheet (iOS/macOS: Mail with attachments, AirDrop, Dateien …). Returns false if unsupported. */

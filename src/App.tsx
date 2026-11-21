@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as cloud from "./lib/cloud";
 import { deleteAudio, deleteMeeting, getMeeting, hasLocalAudio, listMeetings, putAudio, putMeeting, sync } from "./lib/db";
 import EditProtocol from "./EditProtocol";
-import { copyRich, download, exportFiles, fmtDate, mailtoUrl, printProtocol, share } from "./lib/export";
+import { copyRich, download, exportFiles, fmtDate, mailPayload, mailtoUrl, printProtocol, share } from "./lib/export";
 import Player, { type PlayerHandle } from "./Player";
 import { Recorder } from "./lib/recorder";
 import { loadSettings, saveSettings } from "./lib/settings";
@@ -295,7 +295,8 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
   const [toast, setToast] = useState("");
   const [to, setTo] = useState(settings.emailTo);
   const [editing, setEditing] = useState(false);
-  const [mailHint, setMailHint] = useState(false);
+  const [mail, setMail] = useState<{ sending?: boolean; sent?: string; error?: string; pasteHint?: boolean }>({});
+  const [withTranscript, setWithTranscript] = useState(false);
   const [now, setNow] = useState(-1); // playback position, to highlight the spoken passage
   const player = useRef<PlayerHandle>(null);
   const running = useRef(false);
@@ -352,10 +353,22 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
   const speakers = [...new Set(m.transcript?.map((u) => u.speaker))];
   const flash = (t: string) => (setToast(t), setTimeout(() => setToast(""), 6000));
   const when = (iso: string, time: string, text: string) => [fmtDate(iso) || text, time].filter(Boolean).join(", ") || "offen";
-  // Opens an e-mail with the subject filled in and puts the formatted protocol on the clipboard.
-  const sendMail = async () => {
+  // Signed in: the server sends the formatted protocol itself.
+  const sendDirect = async () => {
+    const recipients = to.split(/[,;\s]+/).filter(Boolean);
+    if (!recipients.length) return setMail({ error: "Bitte einen Empfänger eintragen." });
+    setMail({ sending: true });
+    try {
+      await cloud.sendMail(mailPayload(m, recipients, withTranscript));
+      setMail({ sent: recipients.join(", ") });
+    } catch (e) {
+      setMail({ error: (e as Error).message });
+    }
+  };
+  // Own mail program: opens a new e-mail and puts the formatted protocol on the clipboard to paste.
+  const openMailer = async () => {
     const copied = await copyRich(m).then(() => true, () => false);
-    setMailHint(copied);
+    setMail({ pasteHint: copied });
     location.href = mailtoUrl(m, to, !copied);
   };
 
@@ -497,10 +510,24 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
         <footer className="actions">
           <h3>Versenden &amp; speichern</h3>
           <div className="row">
-            <input type="email" placeholder="empfaenger@firma.de" value={to} onChange={(e) => setTo(e.target.value)} />
-            <button className="primary" onClick={sendMail}>E-Mail</button>
+            <input type="text" inputMode="email" autoCapitalize="off" placeholder="empfaenger@firma.de, weitere@firma.de" value={to} onChange={(e) => setTo(e.target.value)} aria-label="Empfänger" />
+            {account ? (
+              <button className="primary" disabled={mail.sending} onClick={sendDirect}>{mail.sending ? "Sendet …" : "Senden"}</button>
+            ) : (
+              <button className="primary" onClick={openMailer}>E-Mail</button>
+            )}
           </div>
-          {mailHint && (
+          {account && (
+            <div className="row wrap">
+              <label className="check inline">
+                <input type="checkbox" checked={withTranscript} onChange={(e) => setWithTranscript(e.target.checked)} /> Transkript mitsenden
+              </label>
+              <button className="ghost" onClick={openMailer}>Im eigenen Mailprogramm öffnen</button>
+            </div>
+          )}
+          {mail.sent && <p className="notice ok">Gesendet an {mail.sent}.</p>}
+          {mail.error && <p className="notice error">{mail.error}</p>}
+          {mail.pasteHint && (
             <p className="notice">
               Das Protokoll liegt fertig gestaltet in der Zwischenablage. In das Textfeld der E-Mail klicken und mit <strong>⌘V</strong> einfügen
               (am iPhone: lange tippen → Einsetzen).
