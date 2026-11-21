@@ -98,3 +98,18 @@ export async function pushProfile(s: Settings) {
   const data: Profile = { myName: s.myName, language: s.language, voiceRef: s.voiceRef, emailTo: s.emailTo, updatedAt: s.updatedAt };
   fail((await supabase!.from("profiles").upsert({ user_id: uid(), data, updated_at: s.updatedAt ?? 0 })).error);
 }
+
+// --- e-mail -------------------------------------------------------------------
+
+/** Sends a formatted e-mail through the server (which holds the mailbox credentials). */
+export async function sendMail(payload: { to: string[]; subject: string; html: string; text: string; attachments: unknown[] }) {
+  const res = await fetch(functionUrl("send-mail"), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await accessToken()}`, apikey: publishableKey(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error?.message || `Versand fehlgeschlagen (${res.status}).`);
+  }
+}

@@ -125,3 +125,4 @@ label.check.inline { display: inline-flex; margin: 0; }
   #root, .toast { display: none !important; }
   #print-root { display: block; background: #fff; color: #000; padding: 0; }
 }
+.notice.ok { background: color-mix(in srgb, var(--green) 16%, transparent); }
