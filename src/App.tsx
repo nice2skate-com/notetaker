@@ -349,7 +349,7 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
   const busy = m.status === "transcribing" || m.status === "summarizing";
   const name = (label: string) => m.speakerNames[label] || label;
   const speakers = [...new Set(m.transcript?.map((u) => u.speaker))];
-  const flash = (t: string) => (setToast(t), setTimeout(() => setToast(""), 2500));
+  const flash = (t: string) => (setToast(t), setTimeout(() => setToast(""), 6000));
   const when = (iso: string, time: string, text: string) => [fmtDate(iso) || text, time].filter(Boolean).join(", ") || "offen";
 
   return (
@@ -491,7 +491,15 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
           <h3>Versenden &amp; speichern</h3>
           <div className="row">
             <input type="email" placeholder="empfaenger@firma.de" value={to} onChange={(e) => setTo(e.target.value)} />
-            <a className="button primary" href={mailtoUrl(m, to)}>E-Mail</a>
+            <a
+              className="button primary"
+              href={mailtoUrl(m, to)}
+              // A mail link can only carry plain text. The formatted version (with tables) is put on
+              // the clipboard at the same time, so it can be pasted over the plain text.
+              onClick={() => copyRich(m).then(() => flash("Formatierte Fassung kopiert – in der E-Mail alles markieren und einfügen."), () => {})}
+            >
+              E-Mail
+            </a>
           </div>
           <div className="row wrap">
             {!!navigator.share && (
