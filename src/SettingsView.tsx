@@ -8,13 +8,46 @@ import type { Meeting, Settings } from "./lib/types";
 
 const SAMPLE_MS = 9000;
 
-function Account({ account }: { account: string | null }) {
+function Account({ account, recovery }: { account: string | null; recovery: boolean }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [resetting, setResetting] = useState(recovery);
   if (!supabase) return null;
   const auth = supabase.auth;
+  const here = location.origin + location.pathname;
+
+  const forgot = async () => {
+    setMsg("");
+    const { error } = await auth.resetPasswordForEmail(email, { redirectTo: here });
+    setMsg(error ? error.message : "Wir haben Ihnen einen Link zum Zurücksetzen geschickt. Bitte auf diesem Gerät öffnen.");
+  };
+  const setNew = async () => {
+    setBusy(true);
+    const { error } = await auth.updateUser({ password });
+    setBusy(false);
+    if (error) return setMsg(error.message);
+    setResetting(false);
+    setPassword("");
+    setMsg("Neues Passwort gespeichert.");
+  };
+
+  // Arrived through the reset link: already signed in, only the new password is missing.
+  if (resetting && account)
+    return (
+      <>
+        <h2>Neues Passwort</h2>
+        <form onSubmit={(e) => (e.preventDefault(), setNew())}>
+          <label>
+            Neues Passwort für {account}
+            <input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          <button className="primary" disabled={busy}>Speichern</button>
+          {msg && <p className="notice">{msg}</p>}
+        </form>
+      </>
+    );
 
   const act = async (mode: "in" | "up") => {
     setBusy(true);
@@ -22,7 +55,7 @@ function Account({ account }: { account: string | null }) {
     const { data, error } =
       mode === "in"
         ? await auth.signInWithPassword({ email, password })
-        : await auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
+        : await auth.signUp({ email, password, options: { emailRedirectTo: here } });
     setBusy(false);
     if (error) return setMsg(error.message === "Invalid login credentials" ? "E-Mail oder Passwort stimmt nicht." : error.message);
     if (mode === "up" && !data.session) setMsg("Fast fertig: Bitte den Link in der Bestätigungs-E-Mail öffnen und danach hier anmelden.");
@@ -32,10 +65,13 @@ function Account({ account }: { account: string | null }) {
     <>
       <h2>Konto</h2>
       {account ? (
-        <div className="row wrap">
-          <span>Angemeldet als <strong>{account}</strong> – Gespräche werden zwischen Ihren Geräten abgeglichen.</span>
-          <button onClick={() => auth.signOut()}>Abmelden</button>
-        </div>
+        <>
+          <div className="row wrap">
+            <span>Angemeldet als <strong>{account}</strong> – Gespräche werden zwischen Ihren Geräten abgeglichen.</span>
+            <button onClick={() => auth.signOut()}>Abmelden</button>
+          </div>
+          {msg && <p className="notice">{msg}</p>}
+        </>
       ) : (
         <form onSubmit={(e) => (e.preventDefault(), act("in"))}>
           <p className="muted small">Mit einem Konto erscheinen Ihre Gespräche auf Handy und Mac, und Sie brauchen keine API-Schlüssel auf dem Gerät.</p>
@@ -50,6 +86,7 @@ function Account({ account }: { account: string | null }) {
           <div className="row wrap">
             <button className="primary" disabled={busy}>Anmelden</button>
             <button type="button" disabled={busy || !email || password.length < 8} onClick={() => act("up")}>Neu registrieren</button>
+            <button type="button" className="ghost" disabled={!email} onClick={forgot}>Passwort vergessen</button>
           </div>
           {msg && <p className="notice">{msg}</p>}
         </form>
@@ -58,7 +95,7 @@ function Account({ account }: { account: string | null }) {
   );
 }
 
-export default function SettingsView({ settings, account, onChange, onBack }: { settings: Settings; account: string | null; onChange: (s: Settings) => void; onBack: () => void }) {
+export default function SettingsView({ settings, account, recovery, onChange, onBack }: { settings: Settings; account: string | null; recovery: boolean; onChange: (s: Settings) => void; onBack: () => void }) {
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [sampling, setSampling] = useState(false);
   const [msg, setMsg] = useState("");
@@ -108,7 +145,7 @@ export default function SettingsView({ settings, account, onChange, onBack }: { 
         <h1>Einstellungen</h1>
       </header>
 
-      <Account account={account} />
+      <Account account={account} recovery={recovery} />
 
       {!account && (
         <>

@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as cloud from "./lib/cloud";
 import { deleteAudio, deleteMeeting, getMeeting, hasLocalAudio, listMeetings, putAudio, putMeeting, sync } from "./lib/db";
-import { copyRich, download, exportFiles, fmtDate, mailtoUrl, share } from "./lib/export";
+import EditProtocol from "./EditProtocol";
+import { copyRich, download, exportFiles, fmtDate, mailtoUrl, printProtocol, share } from "./lib/export";
+import Player, { type PlayerHandle } from "./Player";
 import { Recorder } from "./lib/recorder";
 import { loadSettings, saveSettings } from "./lib/settings";
 import { summarize } from "./lib/summarize";
 import { MAX_UPLOAD_BYTES, transcribeMeeting } from "./lib/transcribe";
 import type { Meeting, Settings } from "./lib/types";
 import SettingsView from "./SettingsView";
+import TasksView from "./TasksView";
 
-type View = { name: "home" } | { name: "record"; system: boolean } | { name: "meeting"; id: string } | { name: "settings" };
+type View = { name: "home" } | { name: "record"; system: boolean } | { name: "meeting"; id: string } | { name: "settings"; recovery?: boolean } | { name: "tasks" };
 
 const dur = (ms: number) => {
   const s = Math.floor(ms / 1000);
@@ -52,6 +55,7 @@ export default function App() {
   };
 
   useEffect(() => cloud.onAuth(setAccount), []);
+  useEffect(() => cloud.onRecovery(() => setView({ name: "settings", recovery: true })), []);
   useEffect(() => {
     if (!account) return;
     const refresh = () => sync().catch(() => {}).then(() => setRev((r) => r + 1));
@@ -68,11 +72,22 @@ export default function App() {
       }
     }).catch(() => {});
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    // Changes from another device arrive right away; several in a row trigger one refresh.
+    let timer: number | undefined;
+    const stop = cloud.onRemoteChange(() => {
+      clearTimeout(timer);
+      timer = window.setTimeout(refresh, 800);
+    });
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearTimeout(timer);
+      stop();
+    };
   }, [account]);
 
   if (view.name === "settings")
-    return <SettingsView settings={settings} account={account} onChange={updateSettings} onBack={() => setView({ name: "home" })} />;
+    return <SettingsView settings={settings} account={account} recovery={!!view.recovery} onChange={updateSettings} onBack={() => setView({ name: "home" })} />;
+  if (view.name === "tasks") return <TasksView rev={rev} onOpen={(id) => setView({ name: "meeting", id })} onBack={() => setView({ name: "home" })} />;
   if (view.name === "record")
     return <RecordView settings={settings} system={view.system} onDone={(id) => setView(id ? { name: "meeting", id } : { name: "home" })} />;
   if (view.name === "meeting")
@@ -84,9 +99,19 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [system, setSystem] = useState(false);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
   useEffect(() => {
     listMeetings().then(setMeetings);
   }, [rev]);
+  const openTasks = meetings.reduce((n, m) => n + (m.summary?.follow_ups.filter((_, i) => !m.done[i]).length ?? 0), 0);
+  // Search covers everything in a meeting: title, protocol and transcript.
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const found = words.length
+    ? meetings.filter((m) => {
+        const text = JSON.stringify([m.title, m.context, m.summary, m.transcript, m.speakerNames]).toLowerCase();
+        return words.every((w) => text.includes(w));
+      })
+    : meetings;
   // Capturing another app's audio only works in desktop browsers.
   const canSystem = !!navigator.mediaDevices?.getDisplayMedia && !/iPhone|iPad|Android/i.test(navigator.userAgent);
   const missingKeys = !account && (!settings.openaiKey || !settings.anthropicKey);
@@ -110,7 +135,10 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
     <main>
       <header>
         <h1>Notetaker</h1>
-        <button className="ghost" onClick={() => go({ name: "settings" })}>Einstellungen</button>
+        <div className="head-actions">
+          <button className="ghost" onClick={() => go({ name: "tasks" })}>Aufgaben{openTasks ? ` (${openTasks})` : ""}</button>
+          <button className="ghost" onClick={() => go({ name: "settings" })}>Einstellungen</button>
+        </div>
       </header>
       {missingKeys && (
         <p className="notice">
@@ -137,8 +165,12 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
       </section>
       <h2>Gespräche</h2>
       {!meetings.length && <p className="muted">Noch keine Aufnahmen.</p>}
+      {meetings.length > 3 && (
+        <input className="search" type="search" placeholder="Suchen in Titeln, Protokollen und Transkripten" value={query} onChange={(e) => setQuery(e.target.value)} />
+      )}
+      {!!meetings.length && !found.length && <p className="muted">Nichts gefunden.</p>}
       <ul className="list">
-        {meetings.map((m) => (
+        {found.map((m) => (
           <li key={m.id} onClick={() => go({ name: "meeting", id: m.id })}>
             <div>
               <strong>{m.title}</strong>
@@ -262,6 +294,9 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
   const [progress, setProgress] = useState("");
   const [toast, setToast] = useState("");
   const [to, setTo] = useState(settings.emailTo);
+  const [editing, setEditing] = useState(false);
+  const [now, setNow] = useState(-1); // playback position, to highlight the spoken passage
+  const player = useRef<PlayerHandle>(null);
   const running = useRef(false);
 
   const save = useCallback((next: Meeting) => {
@@ -327,6 +362,7 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
       <p className="muted">
         {new Date(m.createdAt).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" })} · {dur(m.durationMs)}
       </p>
+      {!!m.segments.length && <Player ref={player} meeting={m} onTime={setNow} />}
       {m.status === "error" && (
         <p className="notice error">
           {m.error} <button onClick={() => process(m, false)}>Erneut versuchen</button>
@@ -339,7 +375,16 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
         </p>
       )}
 
-      {s && (
+      {s && editing && (
+        <>
+          <div className="row">
+            <button className="primary" onClick={() => setEditing(false)}>Fertig</button>
+            <span className="muted small">Änderungen werden sofort gespeichert.</span>
+          </div>
+          <EditProtocol m={m} onChange={save} />
+        </>
+      )}
+      {s && !editing && (
         <>
           <nav className="tabs">
             {TABS.map((t) => (
@@ -417,7 +462,7 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
         </>
       )}
 
-      {(tab === "Transkript" || !s) && !!m.transcript?.length && (
+      {!editing && (tab === "Transkript" || !s) && !!m.transcript?.length && (
         <section>
           <div className="speakers">
             {speakers.map((sp) => (
@@ -429,14 +474,19 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
             ))}
           </div>
           {m.transcript.map((u, i) => (
-            <p key={i} className="utt">
-              <span className="muted small">{dur(u.start * 1000)}</span> <strong>{name(u.speaker)}:</strong> {u.text}
+            <p key={i} className={"utt" + (now >= u.start && now < u.end ? " now" : "")}>
+              {m.segments.length ? (
+                <button className="ts" title="Ab hier anhören" onClick={() => player.current?.playFrom(u.start)}>{dur(u.start * 1000)}</button>
+              ) : (
+                <span className="muted small">{dur(u.start * 1000)}</span>
+              )}{" "}
+              <strong>{name(u.speaker)}:</strong> {u.text}
             </p>
           ))}
         </section>
       )}
 
-      {s && (
+      {s && !editing && (
         <footer className="actions">
           <h3>Versenden &amp; speichern</h3>
           <div className="row">
@@ -449,6 +499,7 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
             )}
             <button onClick={() => copyRich(m).then(() => flash("Kopiert – mit Tabellen einfügbar."))}>Kopieren</button>
             <button onClick={() => exportFiles(m).forEach(download)}>Dateien speichern</button>
+            <button onClick={() => printProtocol(m)}>Als PDF drucken</button>
           </div>
           <p className="muted small">Gespeichert werden das Protokoll (HTML, als PDF druckbar), die Follow-ups (CSV für Excel) und die Termine (ICS für den Kalender).</p>
         </footer>
@@ -456,6 +507,7 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
 
       {!busy && (
         <div className="row wrap danger-zone">
+          {s && !editing && <button onClick={() => setEditing(true)}>Protokoll bearbeiten</button>}
           {m.transcript && <button onClick={() => process(m, false)}>Neu zusammenfassen</button>}
           {m.transcript && !!m.segments.length && <button onClick={() => process(m, true)}>Neu transkribieren</button>}
           {!!m.segments.length && m.status === "done" && (

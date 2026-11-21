@@ -10,7 +10,12 @@ export const supabase: SupabaseClient | null = URL_ && KEY ? createClient(URL_, 
 
 let session: Session | null = null;
 const listeners = new Set<(email: string | null) => void>();
-supabase?.auth.onAuthStateChange((_event, s) => {
+let recovery: (() => void) | null = null;
+/** Called when the user arrives through a "Passwort vergessen" e-mail link. */
+export const onRecovery = (fn: () => void) => void (recovery = fn);
+
+supabase?.auth.onAuthStateChange((event, s) => {
+  if (event === "PASSWORD_RECOVERY") recovery?.();
   session = s;
   listeners.forEach((l) => l(s?.user.email ?? null));
 });
@@ -59,6 +64,12 @@ export async function pushMeeting(m: Meeting) {
 /** Deletions are kept as markers so other devices remove their copy too. */
 export async function pushTombstone(id: string, at: number) {
   fail((await supabase!.from("meetings").upsert({ id, data: {}, updated_at: at, deleted: true })).error);
+}
+
+/** Calls back whenever one of the user's meetings changes on the server (e.g. from another device). */
+export function onRemoteChange(fn: () => void) {
+  const channel = supabase!.channel("meetings").on("postgres_changes", { event: "*", schema: "public", table: "meetings" }, fn).subscribe();
+  return () => void supabase!.removeChannel(channel);
 }
 
 // --- audio ------------------------------------------------------------------

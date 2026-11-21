@@ -199,3 +199,20 @@ export async function copyRich(m: Meeting) {
     await navigator.clipboard.writeText(toMarkdown(m));
   }
 }
+
+/** Opens the system print dialog with the protocol only ("Als PDF sichern" there gives a PDF). */
+export function printProtocol(m: Meeting) {
+  const root = document.createElement("div");
+  root.id = "print-root";
+  root.innerHTML = toHtml(m, true);
+  document.body.append(root);
+  const title = document.title;
+  document.title = safeName(m);
+  const done = () => {
+    document.title = title;
+    root.remove();
+    window.removeEventListener("afterprint", done);
+  };
+  window.addEventListener("afterprint", done);
+  window.print();
+}

@@ -18,6 +18,10 @@ liegen auf dem Server statt auf dem Gerät. Ohne Konto arbeitet die App rein lok
   Verantwortlichen, Fälligkeit und Priorität, offene Fragen.
 - **Versenden und Speichern**: E-Mail-Entwurf im Mailprogramm, Teilen mit Anhängen (iPhone/Mac), Kopieren mit Tabellen,
   Dateien: Protokoll als HTML (als PDF druckbar), Follow-ups als CSV für Excel, Termine als ICS für den Kalender.
+- **Anhören**: Wiedergabe der Aufnahme mit Geschwindigkeitswahl; ein Tipp auf eine Zeitmarke im Transkript springt an die Stelle.
+- **Protokoll bearbeiten**: Zusammenfassung, Entscheidungen, Termine und Follow-ups von Hand korrigieren und ergänzen.
+- **Aufgaben**: alle offenen Follow-ups aus allen Gesprächen in einer Liste, nach Fälligkeit sortiert, mit CSV-Export.
+- **Suche** über Titel, Protokolle und Transkripte; **PDF** über den Druckdialog.
 - **Audiodatei importieren** (bis 25 MB), z. B. aus der Sprachmemos-App.
 
 ## Einrichtung
@@ -61,5 +65,5 @@ npm run build
   während der Aufnahme bitte nicht wechseln.
 - Sprecher bleiben über die 8-Minuten-Teile hinweg für bis zu vier Personen zugeordnet; bei größeren Runden kann die Nummerierung
   weiterer Sprecher zwischen den Teilen wechseln.
-- Der Abgleich läuft beim Öffnen der App und beim Zurückwechseln zu ihr, nicht in Echtzeit. Bei gleichzeitiger Bearbeitung auf zwei Geräten gewinnt die neuere Änderung.
+- Änderungen erscheinen auf dem anderen Gerät innerhalb weniger Sekunden. Bei gleichzeitiger Bearbeitung desselben Gesprächs auf zwei Geräten gewinnt die neuere Änderung.
 - Vor der Aufnahme das Einverständnis aller Beteiligten einholen – das Aufzeichnen von Gesprächen ohne Zustimmung ist in Deutschland strafbar (§ 201 StGB).
