@@ -2,26 +2,30 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as cloud from "./lib/cloud";
 import { deleteAudio, deleteMeeting, getMeeting, hasLocalAudio, listMeetings, putAudio, putMeeting, sync } from "./lib/db";
 import EditProtocol from "./EditProtocol";
+import EventView from "./EventView";
 import { copyRich, download, exportFiles, fmtDate, mailPayload, mailtoUrl, printProtocol, share } from "./lib/export";
 import Player, { type PlayerHandle } from "./Player";
 import { Recorder } from "./lib/recorder";
 import { loadSettings, saveSettings } from "./lib/settings";
 import { summarize } from "./lib/summarize";
 import { MAX_UPLOAD_BYTES, transcribeMeeting } from "./lib/transcribe";
-import type { Meeting, Settings } from "./lib/types";
+import type { Meeting, MeetingKind, Settings } from "./lib/types";
 import SettingsView from "./SettingsView";
 import TasksView from "./TasksView";
 
-type View = { name: "home" } | { name: "record"; system: boolean } | { name: "meeting"; id: string } | { name: "settings"; recovery?: boolean } | { name: "tasks" };
+type View = { name: "home" } | { name: "record"; system: boolean; kind: MeetingKind } | { name: "meeting"; id: string } | { name: "settings"; recovery?: boolean } | { name: "tasks" };
 
 const dur = (ms: number) => {
   const s = Math.floor(ms / 1000);
   const p = (n: number) => String(n).padStart(2, "0");
   return s >= 3600 ? `${Math.floor(s / 3600)}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}` : `${p(Math.floor(s / 60))}:${p(s % 60)}`;
 };
-const newMeeting = (): Meeting => ({
+const KIND_KEY = "notetaker.kind";
+const KINDS: Record<MeetingKind, string> = { meeting: "Besprechung", dj: "DJ-Vorgespräch" };
+const newMeeting = (kind: MeetingKind = "meeting"): Meeting => ({
   id: crypto.randomUUID(),
-  title: "Gespräch vom " + new Date().toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }),
+  kind,
+  title: (kind === "dj" ? "DJ-Vorgespräch vom " : "Gespräch vom ") + new Date().toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }),
   createdAt: Date.now(),
   durationMs: 0,
   status: "recorded",
@@ -89,7 +93,7 @@ export default function App() {
     return <SettingsView settings={settings} account={account} recovery={!!view.recovery} onChange={updateSettings} onBack={() => setView({ name: "home" })} />;
   if (view.name === "tasks") return <TasksView rev={rev} onOpen={(id) => setView({ name: "meeting", id })} onBack={() => setView({ name: "home" })} />;
   if (view.name === "record")
-    return <RecordView settings={settings} system={view.system} onDone={(id) => setView(id ? { name: "meeting", id } : { name: "home" })} />;
+    return <RecordView settings={settings} system={view.system} kind={view.kind} onDone={(id) => setView(id ? { name: "meeting", id } : { name: "home" })} />;
   if (view.name === "meeting")
     return <MeetingView id={view.id} settings={settings} account={account} rev={rev} onBack={() => setView({ name: "home" })} />;
   return <Home settings={settings} account={account} rev={rev} go={setView} />;
@@ -100,6 +104,9 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
   const [system, setSystem] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  // The last chosen type is remembered: a DJ usually has several booking calls in a row.
+  const [kind, setKindState] = useState<MeetingKind>(() => (localStorage.getItem(KIND_KEY) as MeetingKind) || "meeting");
+  const setKind = (k: MeetingKind) => (setKindState(k), localStorage.setItem(KIND_KEY, k));
   useEffect(() => {
     listMeetings().then(setMeetings);
   }, [rev]);
@@ -124,7 +131,7 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
       a.onloadedmetadata = () => resolve(isFinite(a.duration) ? a.duration * 1000 : 0);
       a.onerror = () => resolve(0);
     });
-    const m = { ...newMeeting(), title: file.name.replace(/\.[^.]+$/, ""), durationMs };
+    const m = { ...newMeeting(kind), title: file.name.replace(/\.[^.]+$/, ""), durationMs };
     m.segments = [{ idx: 0, durationMs, mime: file.type }];
     await putAudio(m.id, 0, file);
     await putMeeting(m);
@@ -151,7 +158,15 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
       )}
       {error && <p className="notice error">{error}</p>}
       <section className="card center">
-        <button className="rec" onClick={() => go({ name: "record", system })} aria-label="Aufnahme starten">
+        <div className="kind" role="group" aria-label="Art des Gesprächs">
+          {(Object.keys(KINDS) as MeetingKind[]).map((k) => (
+            <button key={k} className={k === kind ? "on" : ""} aria-pressed={k === kind} onClick={() => setKind(k)}>
+              {KINDS[k]}
+            </button>
+          ))}
+        </div>
+        <br />
+        <button className="rec" onClick={() => go({ name: "record", system, kind })} aria-label="Aufnahme starten">
           <span />
         </button>
         <p className="muted">Aufnahme starten</p>
@@ -176,7 +191,7 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
         {found.map((m) => (
           <li key={m.id} onClick={() => go({ name: "meeting", id: m.id })}>
             <div>
-              <strong>{m.title}</strong>
+              <strong>{m.kind === "dj" && <span className="tag">DJ</span>}{m.title}</strong>
               <span className="muted">
                 {new Date(m.createdAt).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" })} · {dur(m.durationMs)}
               </span>
@@ -189,7 +204,7 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
   );
 }
 
-function RecordView({ settings, system, onDone }: { settings: Settings; system: boolean; onDone: (id?: string) => void }) {
+function RecordView({ settings, system, kind, onDone }: { settings: Settings; system: boolean; kind: MeetingKind; onDone: (id?: string) => void }) {
   const [elapsed, setElapsed] = useState(0);
   const [paused, setPaused] = useState(false);
   const [level, setLevel] = useState(0);
@@ -198,7 +213,7 @@ function RecordView({ settings, system, onDone }: { settings: Settings; system: 
   const [context, setContext] = useState("");
   const [stopping, setStopping] = useState(false);
   const rec = useRef<Recorder | null>(null);
-  const meeting = useRef<Meeting>(newMeeting());
+  const meeting = useRef<Meeting>(newMeeting(kind));
 
   useEffect(() => {
     let quietSince = 0;
@@ -289,11 +304,13 @@ function RecordView({ settings, system, onDone }: { settings: Settings; system: 
   );
 }
 
-const TABS = ["Übersicht", "Entscheidungen", "Termine", "Follow-ups", "Transkript"] as const;
+const TABS = ["Event", "Übersicht", "Entscheidungen", "Termine", "Follow-ups", "Transkript"] as const;
 
 function MeetingView({ id, settings, account, rev, onBack }: { id: string; settings: Settings; account: string | null; rev: number; onBack: () => void }) {
   const [m, setM] = useState<Meeting | null>(null);
   const [tab, setTab] = useState<(typeof TABS)[number]>("Übersicht");
+  const tabFor = (x: Meeting) => (x.summary?.event ? "Event" : "Übersicht");
+  const tabSet = useRef(false);
   const [progress, setProgress] = useState("");
   const [toast, setToast] = useState("");
   const [to, setTo] = useState(settings.emailTo);
@@ -326,8 +343,9 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
         await save(Object.assign(cur, { status: "summarizing" }));
         const summary = await summarize(cur, settings);
         for (const s of summary.speaker_names) if (s.name && cur.transcript!.some((u) => u.speaker === s.label)) cur.speakerNames[s.label] ??= s.name;
-        if (cur.title.startsWith("Gespräch vom ") && summary.title) cur.title = summary.title;
+        if (/^(DJ-Vorgespräch|Gespräch) vom /.test(cur.title) && summary.title) cur.title = summary.title;
         await save(Object.assign(cur, { summary, status: "done", done: {} }));
+        setTab(tabFor(cur));
       } catch (e) {
         await save(Object.assign(cur, { status: "error", error: (e as Error).message }));
       } finally {
@@ -343,6 +361,10 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
     getMeeting(id).then(async (meeting) => {
       if (!meeting) return onBack();
       setM(meeting);
+      if (!tabSet.current) {
+        tabSet.current = true;
+        setTab(tabFor(meeting));
+      }
       // Fresh recording, or a run that was interrupted by closing the app. Only where the
       // audio was recorded: another device showing the same meeting must not start a second run.
       if (meeting.status !== "done" && meeting.status !== "error" && (await hasLocalAudio(id, 0))) process(meeting, false);
@@ -392,6 +414,12 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
         </p>
       )}
       {busy && <div className="spinner" />}
+      {!busy && s && !!m.transcript && (m.kind === "dj") !== !!s.event && (
+        <p className="notice">
+          {m.kind === "dj" ? "Als DJ-Vorgespräch markiert – das Event-Briefing entsteht beim neuen Zusammenfassen." : "Als Besprechung markiert – beim neuen Zusammenfassen entfällt das Event-Briefing."}{" "}
+          <button onClick={() => process(m, false)}>Neu zusammenfassen</button>
+        </p>
+      )}
       {m.status !== "done" && m.status !== "error" && !running.current && !!m.segments.length && (
         <p className="notice">
           Die Auswertung läuft möglicherweise auf einem anderen Gerät. <button onClick={() => process(m, false)}>Hier auswerten</button>
@@ -410,7 +438,7 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
       {s && !editing && (
         <>
           <nav className="tabs">
-            {TABS.map((t) => (
+            {TABS.filter((t) => t !== "Event" || s.event).map((t) => (
               <button key={t} className={t === tab ? "active" : ""} onClick={() => setTab(t)}>
                 {t}
                 {t === "Entscheidungen" && ` (${s.decisions.length})`}
@@ -420,7 +448,8 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
             ))}
           </nav>
 
-          {tab === "Übersicht" && (
+          {tab === "Event" && s.event && <EventView e={s.event} />}
+          {(tab === "Übersicht" || (tab === "Event" && !s.event)) && (
             <section>
               <p>{s.overview}</p>
               {!!s.key_points.length && <h3>Kernpunkte</h3>}
@@ -552,6 +581,10 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
         <div className="row wrap danger-zone">
           {s && !editing && <button onClick={() => setEditing(true)}>Protokoll bearbeiten</button>}
           {m.transcript && <button onClick={() => process(m, false)}>Neu zusammenfassen</button>}
+          <select className="kind-select" value={m.kind ?? "meeting"} aria-label="Art des Gesprächs"
+            onChange={(e) => save({ ...m, kind: e.target.value as MeetingKind })}>
+            {(Object.keys(KINDS) as MeetingKind[]).map((k) => <option key={k} value={k}>{KINDS[k]}</option>)}
+          </select>
           {m.transcript && !!m.segments.length && <button onClick={() => process(m, true)}>Neu transkribieren</button>}
           {!!m.segments.length && m.status === "done" && (
             <button onClick={() => confirm("Audio löschen? Protokoll und Transkript bleiben erhalten.") && deleteAudio(m).then(() => save({ ...m, segments: [] }))}>

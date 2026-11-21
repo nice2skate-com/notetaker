@@ -28,6 +28,27 @@ export interface FollowUp {
   priority: "hoch" | "mittel" | "niedrig";
 }
 
+/** Extra details for a DJ booking conversation (couple, organiser, venue). */
+export interface EventBriefing {
+  event_type: string; // Hochzeit, Geburtstag, Firmenfeier …
+  date: string; // yyyy-mm-dd or ""
+  date_text: string;
+  start_time: string; // HH:MM or ""
+  end_time: string;
+  location: string;
+  guest_count: string;
+  contacts: { name: string; role: string; contact: string }[];
+  timeline: { time: string; item: string }[];
+  special_moments: { moment: string; song: string }[];
+  music_style: string;
+  must_play: string[];
+  do_not_play: string[];
+  logistics: string[];
+  fee: string;
+}
+
+export type MeetingKind = "meeting" | "dj";
+
 export interface Summary {
   title: string;
   overview: string;
@@ -37,6 +58,7 @@ export interface Summary {
   follow_ups: FollowUp[];
   open_questions: string[];
   speaker_names: { label: string; name: string }[];
+  event?: EventBriefing; // only for DJ booking conversations
 }
 
 export interface SegmentMeta {
@@ -55,6 +77,7 @@ export interface Meeting {
   status: MeetingStatus;
   error?: string;
   context: string; // optional user notes: participants, agenda …
+  kind?: MeetingKind; // missing = "meeting"
   segments: SegmentMeta[];
   transcript?: Utterance[];
   speakerNames: Record<string, string>; // label -> display name
