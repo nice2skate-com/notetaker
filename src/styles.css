@@ -145,3 +145,27 @@ label.check.inline { display: inline-flex; margin: 0; }
   .brand img { height: 18px; }
   input.title { font-size: 21px; }
 }
+
+/* Meeting type switch on the start page */
+.kind { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin-bottom: 18px; }
+.kind button { border: none; border-radius: 0; background: transparent; color: var(--muted); padding: 8px 14px; font-size: 14px; }
+.kind button.on { background: var(--accent); color: var(--accent-ink); font-weight: 500; }
+.tag { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); border: 1px solid rgba(178,157,117,.5); border-radius: 3px; padding: 1px 5px; margin-right: 6px; vertical-align: 2px; }
+
+/* DJ event sheet */
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: 4px 0 8px; }
+.facts div { background: var(--card); padding: 10px 12px; }
+.facts dt { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+.facts dd { margin: 2px 0 0; font-weight: 400; }
+ul.plain { list-style: none; padding: 0; }
+ul.plain li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.timeline { list-style: none; padding: 0; margin: 0; border-left: 1px solid var(--accent); }
+.timeline li { display: flex; gap: 14px; padding: 6px 0 6px 14px; position: relative; }
+.timeline li::before { content: ""; position: absolute; left: -4px; top: 14px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.timeline .t { min-width: 52px; color: var(--accent-2); font-variant-numeric: tabular-nums; }
+.song { font-weight: 400; }
+.song.open { color: var(--amber); font-style: italic; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 600px) { .two { grid-template-columns: 1fr; gap: 0; } }
+h3.nogo { color: var(--red); }
+.kind-select { width: auto; font-size: 14px; padding: 8px 10px; }

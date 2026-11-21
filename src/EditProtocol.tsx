@@ -1,4 +1,4 @@
-import type { Decision, FollowUp, Meeting, ScheduleItem, Summary } from "./lib/types";
+import type { Decision, EventBriefing, FollowUp, Meeting, ScheduleItem, Summary } from "./lib/types";
 
 const lines = (v: string) => v.split("\n");
 const clean = (a: string[]) => a.map((s) => s.trim()).filter(Boolean);
@@ -31,6 +31,8 @@ export default function EditProtocol({ m, onChange }: { m: Meeting; onChange: (m
 
   return (
     <section className="edit">
+      {s.event && <EditEvent e={s.event} onChange={(event) => set({ event })} />}
+
       <h3>Zusammenfassung</h3>
       <textarea rows={5} value={s.overview} onChange={(e) => set({ overview: e.target.value })} aria-label="Zusammenfassung" />
 
@@ -90,5 +92,80 @@ export default function EditProtocol({ m, onChange }: { m: Meeting; onChange: (m
       <textarea rows={Math.max(3, s.open_questions.length + 1)} value={s.open_questions.join("\n")} aria-label="Offene Fragen"
         onChange={(e) => set({ open_questions: lines(e.target.value) })} onBlur={() => set({ open_questions: clean(s.open_questions) })} />
     </section>
+  );
+}
+
+// Structured lists are edited as text, one entry per line, with " | " between the columns.
+const SEP = " | ";
+const toLines = <T,>(items: T[], keys: (keyof T)[]) => items.map((x) => keys.map((k) => String(x[k] ?? "")).join(SEP).replace(/( \| )+$/, "")).join("\n");
+function fromLines<T>(text: string, keys: (keyof T)[]): T[] {
+  return text
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => {
+      const parts = l.split("|").map((p) => p.trim());
+      // Anything beyond the last column stays in the last column.
+      const rest = parts.slice(keys.length - 1).join(" | ");
+      return Object.fromEntries(keys.map((k, i) => [k, i < keys.length - 1 ? parts[i] ?? "" : rest])) as T;
+    });
+}
+
+// Text areas keep their own draft (uncontrolled) so that a half-typed "|" or an empty line
+// is not cleaned away mid-edit; the text is parsed when the field is left.
+function Area({ label, hint, value, onSave }: { label: string; hint: string; value: string; onSave: (v: string) => void }) {
+  return (
+    <label>
+      {label} <span className="muted small">({hint})</span>
+      <textarea rows={Math.max(3, value.split("\n").length + 1)} defaultValue={value} onBlur={(ev) => onSave(ev.target.value)} />
+    </label>
+  );
+}
+
+/** Event briefing of a DJ booking conversation. */
+function EditEvent({ e, onChange }: { e: EventBriefing; onChange: (e: EventBriefing) => void }) {
+  const set = (patch: Partial<EventBriefing>) => onChange({ ...e, ...patch });
+  const field = (label: string, key: "event_type" | "location" | "guest_count" | "fee" | "date_text") => (
+    <label>
+      {label}
+      <input value={e[key]} onChange={(ev) => set({ [key]: ev.target.value })} />
+    </label>
+  );
+  return (
+    <>
+      <h3>Event</h3>
+      {field("Anlass", "event_type")}
+      <div className="row">
+        <label>
+          Datum
+          <input type="date" value={e.date} onChange={(ev) => set({ date: ev.target.value })} />
+        </label>
+        <label>
+          Beginn
+          <input type="time" value={e.start_time} onChange={(ev) => set({ start_time: ev.target.value })} />
+        </label>
+        <label>
+          Ende
+          <input type="time" value={e.end_time} onChange={(ev) => set({ end_time: ev.target.value })} />
+        </label>
+      </div>
+      {field("Location", "location")}
+      <div className="row">
+        {field("Gäste", "guest_count")}
+        {field("Gage", "fee")}
+      </div>
+      <Area label="Ansprechpartner" hint="Name | Rolle | Kontakt" value={toLines(e.contacts, ["name", "role", "contact"])}
+        onSave={(v) => set({ contacts: fromLines(v, ["name", "role", "contact"]) })} />
+      <Area label="Ablauf" hint="Zeit | Programmpunkt" value={toLines(e.timeline, ["time", "item"])}
+        onSave={(v) => set({ timeline: fromLines(v, ["time", "item"]) })} />
+      <Area label="Besondere Momente" hint="Moment | Song" value={toLines(e.special_moments, ["moment", "song"])}
+        onSave={(v) => set({ special_moments: fromLines(v, ["moment", "song"]) })} />
+      <label>
+        Musik &amp; Stimmung
+        <textarea rows={3} value={e.music_style} onChange={(ev) => set({ music_style: ev.target.value })} />
+      </label>
+      <Area label="Musikwünsche" hint="einer pro Zeile" value={e.must_play.join("\n")} onSave={(v) => set({ must_play: clean(lines(v)) })} />
+      <Area label="No-Gos" hint="eines pro Zeile" value={e.do_not_play.join("\n")} onSave={(v) => set({ do_not_play: clean(lines(v)) })} />
+      <Area label="Technik & Organisation" hint="ein Punkt pro Zeile" value={e.logistics.join("\n")} onSave={(v) => set({ logistics: clean(lines(v)) })} />
+    </>
   );
 }

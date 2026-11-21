@@ -18,6 +18,9 @@ liegen auf dem Server statt auf dem Gerät. Ohne Konto arbeitet die App rein lok
   Verantwortlichen, Fälligkeit und Priorität, offene Fragen.
 - **Versenden und Speichern**: gestaltete E-Mail direkt aus der App (mit Follow-ups als CSV und Terminen als ICS im Anhang), Teilen mit Anhängen (iPhone/Mac), Kopieren mit Tabellen,
   Dateien: Protokoll als HTML (als PDF druckbar), Follow-ups als CSV für Excel, Termine als ICS für den Kalender.
+- **DJ-Vorgespräch**: Vor der Aufnahme „DJ-Vorgespräch“ wählen. Zusätzlich zum Protokoll entsteht ein Event-Briefing mit Anlass, Datum, Location,
+  Gästen, Gage, Ansprechpartnern, Ablauf des Abends, besonderen Momenten mit Songs, Musikwünschen, No-Gos sowie Technik und Organisation.
+  Es steht in der App als eigener Reiter, in E-Mail und PDF als eigener Abschnitt, und der Eventtag landet in der Kalenderdatei.
 - **Anhören**: Wiedergabe der Aufnahme mit Geschwindigkeitswahl; ein Tipp auf eine Zeitmarke im Transkript springt an die Stelle.
 - **Protokoll bearbeiten**: Zusammenfassung, Entscheidungen, Termine und Follow-ups von Hand korrigieren und ergänzen.
 - **Aufgaben**: alle offenen Follow-ups aus allen Gesprächen in einer Liste, nach Fälligkeit sortiert, mit CSV-Export.

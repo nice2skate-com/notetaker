@@ -1,4 +1,4 @@
-import type { Meeting } from "./types";
+import type { EventBriefing, Meeting } from "./types";
 import { transcriptText } from "./summarize";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -18,12 +18,39 @@ const length = (m: Meeting) => {
 const meetingDate = (m: Meeting) =>
   new Date(m.createdAt).toLocaleString("de-DE", { dateStyle: "long", timeStyle: "short" });
 
+/** Key facts of an event as label/value pairs, leaving out what is unknown. */
+export function eventFacts(e: EventBriefing): [string, string][] {
+  const time = [e.start_time, e.end_time].filter(Boolean).join(" – ");
+  const pairs: [string, string][] = [
+    ["Anlass", e.event_type],
+    ["Datum", fmtDate(e.date) || e.date_text],
+    ["Uhrzeit", time],
+    ["Location", e.location],
+    ["Gäste", e.guest_count],
+    ["Gage", e.fee],
+  ];
+  return pairs.filter(([, v]) => v.trim());
+}
+
+function eventMarkdown(e: EventBriefing): string[] {
+  const L: string[] = ["## Event", ...eventFacts(e).map(([k, v]) => `- ${k}: ${v}`), ""];
+  if (e.contacts.length) L.push("## Ansprechpartner", ...e.contacts.map((c) => `- ${c.name}${c.role ? ` (${c.role})` : ""}${c.contact ? `: ${c.contact}` : ""}`), "");
+  if (e.timeline.length) L.push("## Ablauf", ...e.timeline.map((t) => `- ${t.time ? t.time + " " : ""}${t.item}`), "");
+  if (e.special_moments.length) L.push("## Besondere Momente", ...e.special_moments.map((t) => `- ${t.moment}: ${t.song || "noch offen"}`), "");
+  if (e.music_style) L.push("## Musik & Stimmung", e.music_style, "");
+  if (e.must_play.length) L.push("## Musikwünsche", ...e.must_play.map((p) => `- ${p}`), "");
+  if (e.do_not_play.length) L.push("## No-Gos", ...e.do_not_play.map((p) => `- ${p}`), "");
+  if (e.logistics.length) L.push("## Technik & Organisation", ...e.logistics.map((p) => `- ${p}`), "");
+  return L;
+}
+
 /** Plain text / Markdown – used for e-mail bodies and .md download. */
 export function toMarkdown(m: Meeting, withTranscript = false): string {
   const s = m.summary;
   const L: string[] = [`# ${m.title}`, `${meetingDate(m)} · Dauer ${length(m)}`, ""];
   if (s) {
     L.push("## Zusammenfassung", s.overview, "");
+    if (s.event) L.push(...eventMarkdown(s.event));
     if (s.key_points.length) L.push("## Kernpunkte", ...s.key_points.map((p) => `- ${p}`), "");
     if (s.decisions.length) {
       L.push("## Entscheidungen");
@@ -96,6 +123,26 @@ export function toHtml(m: Meeting, withTranscript = false): string {
   ];
   if (s) {
     body.push(h2("Zusammenfassung"), row(esc(s.overview)));
+    if (s.event) {
+      const e = s.event;
+      const facts = eventFacts(e);
+      if (facts.length)
+        body.push(
+          h2("Event"),
+          row(
+            `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">${facts
+              .map(([k, v]) => `<tr><td style="${cell};width:32%;font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:${GOLD_TEXT}">${k}</td><td style="${cell}">${esc(v)}</td></tr>`)
+              .join("")}</table>`
+          )
+        );
+      if (e.contacts.length) body.push(h2("Ansprechpartner"), table(["Name", "Rolle", "Kontakt"], e.contacts.map((c) => [c.name, c.role, c.contact])));
+      if (e.timeline.length) body.push(h2("Ablauf"), table(["Zeit", "Programmpunkt"], e.timeline.map((t) => [t.time, t.item])));
+      if (e.special_moments.length) body.push(h2("Besondere Momente"), table(["Moment", "Song"], e.special_moments.map((t) => [t.moment, t.song || "noch offen"])));
+      if (e.music_style) body.push(h2("Musik & Stimmung"), row(esc(e.music_style)));
+      if (e.must_play.length) body.push(h2("Musikwünsche"), list(e.must_play));
+      if (e.do_not_play.length) body.push(h2("No-Gos"), list(e.do_not_play));
+      if (e.logistics.length) body.push(h2("Technik & Organisation"), list(e.logistics));
+    }
     if (s.key_points.length) body.push(h2("Kernpunkte"), list(s.key_points));
     if (s.decisions.length)
       body.push(h2("Entscheidungen"), table(["Entscheidung", "Begründung", "Verantwortlich"], s.decisions.map((d) => [d.decision, d.rationale, d.owner])));
@@ -174,6 +221,15 @@ export function toIcs(m: Meeting): string {
       "END:VEVENT"
     );
   };
+  const e = m.summary?.event;
+  if (e?.date)
+    add(
+      "event",
+      [e.event_type || "Event", e.location].filter(Boolean).join(" – "),
+      e.date,
+      e.start_time,
+      [e.contacts.map((c) => [c.name, c.role].filter(Boolean).join(", ")).join("; "), `Aus: ${m.title}`].filter(Boolean).join("\n")
+    );
   m.summary?.schedule.forEach((t, i) =>
     add(`t${i}`, t.title, t.date, t.time, [t.participants, t.notes, `Aus: ${m.title}`].filter(Boolean).join("\n"))
   );
