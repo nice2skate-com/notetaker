@@ -295,6 +295,7 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
   const [toast, setToast] = useState("");
   const [to, setTo] = useState(settings.emailTo);
   const [editing, setEditing] = useState(false);
+  const [mailHint, setMailHint] = useState(false);
   const [now, setNow] = useState(-1); // playback position, to highlight the spoken passage
   const player = useRef<PlayerHandle>(null);
   const running = useRef(false);
@@ -351,6 +352,12 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
   const speakers = [...new Set(m.transcript?.map((u) => u.speaker))];
   const flash = (t: string) => (setToast(t), setTimeout(() => setToast(""), 6000));
   const when = (iso: string, time: string, text: string) => [fmtDate(iso) || text, time].filter(Boolean).join(", ") || "offen";
+  // Opens an e-mail with the subject filled in and puts the formatted protocol on the clipboard.
+  const sendMail = async () => {
+    const copied = await copyRich(m).then(() => true, () => false);
+    setMailHint(copied);
+    location.href = mailtoUrl(m, to, !copied);
+  };
 
   return (
     <main>
@@ -491,16 +498,14 @@ function MeetingView({ id, settings, account, rev, onBack }: { id: string; setti
           <h3>Versenden &amp; speichern</h3>
           <div className="row">
             <input type="email" placeholder="empfaenger@firma.de" value={to} onChange={(e) => setTo(e.target.value)} />
-            <a
-              className="button primary"
-              href={mailtoUrl(m, to)}
-              // A mail link can only carry plain text. The formatted version (with tables) is put on
-              // the clipboard at the same time, so it can be pasted over the plain text.
-              onClick={() => copyRich(m).then(() => flash("Formatierte Fassung kopiert – in der E-Mail alles markieren und einfügen."), () => {})}
-            >
-              E-Mail
-            </a>
+            <button className="primary" onClick={sendMail}>E-Mail</button>
           </div>
+          {mailHint && (
+            <p className="notice">
+              Das Protokoll liegt fertig gestaltet in der Zwischenablage. In das Textfeld der E-Mail klicken und mit <strong>⌘V</strong> einfügen
+              (am iPhone: lange tippen → Einsetzen).
+            </p>
+          )}
           <div className="row wrap">
             {!!navigator.share && (
               <button onClick={async () => (await share(m)) || flash("Teilen wird hier nicht unterstützt.")}>Teilen mit Anhängen</button>
