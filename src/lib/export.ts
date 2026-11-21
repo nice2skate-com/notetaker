@@ -59,48 +59,79 @@ export function toMarkdown(m: Meeting, withTranscript = false): string {
 }
 
 /** HTML with real tables – for rich clipboard, .html download and printing to PDF. */
+// Brand colours for documents. Gold on white is too faint for text, so headings use a darker gold.
+const INK = "#0F0C07";
+const GOLD = "#B29D75";
+const GOLD_TEXT = "#7A6640";
+const CREAM = "#F3F1E9";
+const MUTED = "#6F685C";
+const FONT = "'Fira Sans',-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
+
+/**
+ * The protocol as a self-contained HTML block in the DJ KOLJA ONE design. Used for the e-mail,
+ * the clipboard, the HTML file and printing, so everything is inline-styled and table-based:
+ * mail programs drop style sheets and handle tables far better than modern layout.
+ */
 export function toHtml(m: Meeting, withTranscript = false): string {
-  // Everything is styled inline: mail programs drop style sheets and most default spacing.
   const s = m.summary;
-  const cell = "border:1px solid #cbd5e1;padding:8px 10px;text-align:left;vertical-align:top";
+  const logo = typeof location !== "undefined" ? `${location.origin}/logo-mail.png` : "logo-mail.png";
+  const cell = `border-bottom:1px solid #E4DFD3;padding:9px 10px;text-align:left;vertical-align:top;font-size:14px;color:${INK}`;
   const h2 = (t: string) =>
-    `<h2 style="font-size:16px;margin:26px 0 8px;padding-bottom:4px;border-bottom:2px solid #2563eb;color:#0f172a">${t}</h2>`;
+    `<tr><td style="padding:26px 0 8px"><div style="font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:${GOLD_TEXT};border-bottom:1px solid ${GOLD};padding-bottom:6px">${t}</div></td></tr>`;
+  const row = (html: string) => `<tr><td style="font-size:15px;line-height:1.6;color:${INK}">${html}</td></tr>`;
   const list = (items: string[]) =>
-    `<ul style="margin:0;padding-left:22px">${items.map((p) => `<li style="margin:5px 0">${esc(p)}</li>`).join("")}</ul>`;
+    row(`<ul style="margin:0;padding-left:20px">${items.map((p) => `<li style="margin:5px 0">${esc(p)}</li>`).join("")}</ul>`);
   const table = (head: string[], rows: string[][]) =>
-    `<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr>${head
-      .map((h) => `<th style="${cell};background:#f1f5f9;font-size:13px">${h}</th>`)
-      .join("")}</tr></thead><tbody>${rows
-      .map((r) => `<tr>${r.map((c, i) => `<td style="${cell}${i ? "" : ";font-weight:600"}">${esc(c)}</td>`).join("")}</tr>`)
-      .join("")}</tbody></table>`;
-  const H: string[] = [
-    `<h1 style="font-size:22px;margin:0 0 4px">${esc(m.title)}</h1>`,
-    `<p style="color:#64748b;margin:0 0 8px;font-size:14px">${esc(meetingDate(m))} · Dauer ${length(m)}</p>`,
+    row(
+      `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse"><thead><tr>${head
+        .map((h) => `<th style="${cell};background:${CREAM};font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:${GOLD_TEXT}">${h}</th>`)
+        .join("")}</tr></thead><tbody>${rows
+        .map((r) => `<tr>${r.map((c, i) => `<td style="${cell}${i ? "" : ";font-weight:500"}">${esc(c)}</td>`).join("")}</tr>`)
+        .join("")}</tbody></table>`
+    );
+
+  const body: string[] = [
+    `<tr><td style="padding:4px 0 2px;font-size:24px;line-height:1.3;font-weight:400;color:${INK}">${esc(m.title)}</td></tr>`,
+    `<tr><td style="font-size:13px;color:${MUTED};padding-bottom:4px">${esc(meetingDate(m))} · Dauer ${length(m)}</td></tr>`,
   ];
   if (s) {
-    H.push(h2("Zusammenfassung"), `<p style="margin:0">${esc(s.overview)}</p>`);
-    if (s.key_points.length) H.push(h2("Kernpunkte"), list(s.key_points));
+    body.push(h2("Zusammenfassung"), row(esc(s.overview)));
+    if (s.key_points.length) body.push(h2("Kernpunkte"), list(s.key_points));
     if (s.decisions.length)
-      H.push(h2("Entscheidungen"), table(["Entscheidung", "Begründung", "Verantwortlich"], s.decisions.map((d) => [d.decision, d.rationale, d.owner])));
+      body.push(h2("Entscheidungen"), table(["Entscheidung", "Begründung", "Verantwortlich"], s.decisions.map((d) => [d.decision, d.rationale, d.owner])));
     if (s.schedule.length)
-      H.push(h2("Terminplan"), table(["Wann", "Was", "Wer", "Hinweis"], s.schedule.map((t) => [when(t.date, t.time, t.date_text), t.title, t.participants, t.notes])));
+      body.push(h2("Terminplan"), table(["Wann", "Was", "Wer", "Hinweis"], s.schedule.map((t) => [when(t.date, t.time, t.date_text), t.title, t.participants, t.notes])));
     if (s.follow_ups.length)
-      H.push(
+      body.push(
         h2("Follow-ups"),
         table(
           ["Aufgabe", "Verantwortlich", "Fällig", "Priorität", "Status"],
           s.follow_ups.map((f, i) => [f.task, f.owner, when(f.due_date, "", f.due_text), f.priority, m.done[i] ? "erledigt" : "offen"])
         )
       );
-    if (s.open_questions.length) H.push(h2("Offene Fragen"), list(s.open_questions));
+    if (s.open_questions.length) body.push(h2("Offene Fragen"), list(s.open_questions));
   }
   if (withTranscript && m.transcript?.length)
-    H.push(h2("Transkript"), `<p style="margin:0">${esc(transcriptText(m)).replace(/\n/g, "<br>")}</p>`);
-  return `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#0f172a">${H.join("\n")}</div>`;
+    body.push(h2("Transkript"), row(`<span style="font-size:13px;color:#3A352C">${esc(transcriptText(m)).replace(/\n/g, "<br>")}</span>`));
+
+  return `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:${CREAM};font-family:${FONT};-webkit-print-color-adjust:exact;print-color-adjust:exact">
+<tr><td align="center" style="padding:24px 12px">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:680px;border-collapse:collapse;background:#FFFFFF">
+<tr><td style="background:${INK};padding:22px 28px;border-bottom:3px solid ${GOLD}">
+<img src="${logo}" width="260" height="33" alt="DJ KOLJA ONE" style="display:block;border:0;width:260px;max-width:100%;height:auto;color:${CREAM};font-size:20px;letter-spacing:3px">
+<div style="margin-top:8px;font-size:10px;letter-spacing:4px;text-transform:uppercase;color:${GOLD}">Gesprächsprotokoll</div>
+</td></tr>
+<tr><td style="padding:22px 28px 30px">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">${body.join("\n")}</table>
+</td></tr>
+<tr><td style="background:${INK};padding:14px 28px;font-size:11px;letter-spacing:1px;color:#A39E93">Erstellt mit Notetaker · DJ KOLJA ONE</td></tr>
+</table>
+</td></tr>
+</table>`;
 }
 
 export function toHtmlDocument(m: Meeting): string {
-  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><title>${esc(m.title)}</title></head><body style="max-width:820px;margin:32px auto;padding:0 16px">${toHtml(m, true)}</body></html>`;
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><title>${esc(m.title)}</title></head><body style="margin:0;background:#F3F1E9">${toHtml(m, true)}</body></html>`;
 }
 
 /** Follow-up table as CSV; semicolon + BOM so German Excel opens it correctly. */
