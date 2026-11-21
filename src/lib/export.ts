@@ -60,38 +60,43 @@ export function toMarkdown(m: Meeting, withTranscript = false): string {
 
 /** HTML with real tables – for rich clipboard, .html download and printing to PDF. */
 export function toHtml(m: Meeting, withTranscript = false): string {
+  // Everything is styled inline: mail programs drop style sheets and most default spacing.
   const s = m.summary;
-  const td = 'style="border:1px solid #cbd5e1;padding:6px 10px;text-align:left;vertical-align:top"';
+  const cell = "border:1px solid #cbd5e1;padding:8px 10px;text-align:left;vertical-align:top";
+  const h2 = (t: string) =>
+    `<h2 style="font-size:16px;margin:26px 0 8px;padding-bottom:4px;border-bottom:2px solid #2563eb;color:#0f172a">${t}</h2>`;
+  const list = (items: string[]) =>
+    `<ul style="margin:0;padding-left:22px">${items.map((p) => `<li style="margin:5px 0">${esc(p)}</li>`).join("")}</ul>`;
   const table = (head: string[], rows: string[][]) =>
     `<table style="border-collapse:collapse;width:100%;font-size:14px"><thead><tr>${head
-      .map((h) => `<th ${td}>${h}</th>`)
+      .map((h) => `<th style="${cell};background:#f1f5f9;font-size:13px">${h}</th>`)
       .join("")}</tr></thead><tbody>${rows
-      .map((r) => `<tr>${r.map((c) => `<td ${td}>${esc(c)}</td>`).join("")}</tr>`)
+      .map((r) => `<tr>${r.map((c, i) => `<td style="${cell}${i ? "" : ";font-weight:600"}">${esc(c)}</td>`).join("")}</tr>`)
       .join("")}</tbody></table>`;
   const H: string[] = [
-    `<h1>${esc(m.title)}</h1>`,
-    `<p style="color:#64748b">${esc(meetingDate(m))} · Dauer ${length(m)}</p>`,
+    `<h1 style="font-size:22px;margin:0 0 4px">${esc(m.title)}</h1>`,
+    `<p style="color:#64748b;margin:0 0 8px;font-size:14px">${esc(meetingDate(m))} · Dauer ${length(m)}</p>`,
   ];
   if (s) {
-    H.push(`<h2>Zusammenfassung</h2><p>${esc(s.overview)}</p>`);
-    if (s.key_points.length) H.push(`<h2>Kernpunkte</h2><ul>${s.key_points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`);
+    H.push(h2("Zusammenfassung"), `<p style="margin:0">${esc(s.overview)}</p>`);
+    if (s.key_points.length) H.push(h2("Kernpunkte"), list(s.key_points));
     if (s.decisions.length)
-      H.push("<h2>Entscheidungen</h2>", table(["Entscheidung", "Begründung", "Verantwortlich"], s.decisions.map((d) => [d.decision, d.rationale, d.owner])));
+      H.push(h2("Entscheidungen"), table(["Entscheidung", "Begründung", "Verantwortlich"], s.decisions.map((d) => [d.decision, d.rationale, d.owner])));
     if (s.schedule.length)
-      H.push("<h2>Terminplan</h2>", table(["Wann", "Was", "Wer", "Hinweis"], s.schedule.map((t) => [when(t.date, t.time, t.date_text), t.title, t.participants, t.notes])));
+      H.push(h2("Terminplan"), table(["Wann", "Was", "Wer", "Hinweis"], s.schedule.map((t) => [when(t.date, t.time, t.date_text), t.title, t.participants, t.notes])));
     if (s.follow_ups.length)
       H.push(
-        "<h2>Follow-ups</h2>",
+        h2("Follow-ups"),
         table(
           ["Aufgabe", "Verantwortlich", "Fällig", "Priorität", "Status"],
           s.follow_ups.map((f, i) => [f.task, f.owner, when(f.due_date, "", f.due_text), f.priority, m.done[i] ? "erledigt" : "offen"])
         )
       );
-    if (s.open_questions.length) H.push(`<h2>Offene Fragen</h2><ul>${s.open_questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ul>`);
+    if (s.open_questions.length) H.push(h2("Offene Fragen"), list(s.open_questions));
   }
   if (withTranscript && m.transcript?.length)
-    H.push(`<h2>Transkript</h2><p>${esc(transcriptText(m)).replace(/\n/g, "<br>")}</p>`);
-  return `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;line-height:1.5;color:#0f172a">${H.join("\n")}</div>`;
+    H.push(h2("Transkript"), `<p style="margin:0">${esc(transcriptText(m)).replace(/\n/g, "<br>")}</p>`);
+  return `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#0f172a">${H.join("\n")}</div>`;
 }
 
 export function toHtmlDocument(m: Meeting): string {
@@ -168,16 +173,21 @@ export function download(file: File) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-export function mailtoUrl(m: Meeting, to: string): string {
-  // Mail clients show the body as plain text, so turn Markdown headings into capitalised lines.
+/**
+ * Link that opens a new e-mail. A mail link can only carry plain text, and web mailers
+ * (Yahoo, Gmail in the browser) even drop its line breaks, so by default the body stays
+ * empty and the formatted protocol is pasted from the clipboard instead. `withBody` is the
+ * fallback for when the clipboard is not available.
+ */
+export function mailtoUrl(m: Meeting, to: string, withBody = false): string {
   const plain = toMarkdown(m)
     .replace(/^# /m, "")
     .replace(/^## (.*)$/gm, (_, h: string) => h.toUpperCase())
     .replace(/^- \[x\] /gm, "- (erledigt) ")
     .replace(/^- \[ \] /gm, "- ")
-    // Mail line breaks are CR+LF; web mailers such as Yahoo drop a bare LF and run everything together.
     .replace(/\n/g, "\r\n");
-  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent("Protokoll: " + m.title)}&body=${encodeURIComponent(plain)}`;
+  const body = withBody ? `&body=${encodeURIComponent(plain)}` : "";
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent("Protokoll: " + m.title)}${body}`;
 }
 
 /** Share sheet (iOS/macOS: Mail with attachments, AirDrop, Dateien …). Returns false if unsupported. */
