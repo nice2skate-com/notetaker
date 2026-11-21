@@ -1,13 +1,13 @@
 {
-  "name": "Notetaker",
+  "name": "Notetaker · DJ KOLJA ONE",
   "short_name": "Notetaker",
   "description": "Gespräche aufnehmen, transkribieren und zusammenfassen",
   "lang": "de",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
+  "background_color": "#0F0C07",
+  "theme_color": "#0F0C07",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }

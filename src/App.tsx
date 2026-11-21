@@ -133,8 +133,11 @@ function Home({ settings, account, rev, go }: { settings: Settings; account: str
 
   return (
     <main>
-      <header>
-        <h1>Notetaker</h1>
+      <header className="brand-bar">
+        <div className="brand">
+          <img src="./logo.webp" alt="DJ KOLJA ONE" width={172} height={22} />
+          <span>Notetaker</span>
+        </div>
         <div className="head-actions">
           <button className="ghost" onClick={() => go({ name: "tasks" })}>Aufgaben{openTasks ? ` (${openTasks})` : ""}</button>
           <button className="ghost" onClick={() => go({ name: "settings" })}>Einstellungen</button>
