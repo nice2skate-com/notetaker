@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { accessToken, functionUrl, publishableKey, signedIn } from "./cloud";
 import type { Meeting, Settings, Summary } from "./types";
 
 const str = { type: "string" } as const;
@@ -51,9 +52,17 @@ export function transcriptText(m: Meeting): string {
 }
 
 export async function summarize(meeting: Meeting, settings: Settings): Promise<Summary> {
-  // The key is the user's own and stays on their device, so calling the API
-  // straight from the browser is acceptable here.
-  const client = new Anthropic({ apiKey: settings.anthropicKey, dangerouslyAllowBrowser: true });
+  // Signed in: requests go to our server function, which adds the Anthropic key; the
+  // browser only holds the user's own login token. Signed out: the user's own key,
+  // kept on their device, is used directly.
+  const client = signedIn()
+    ? new Anthropic({
+        baseURL: functionUrl("anthropic"),
+        apiKey: "held-by-server",
+        defaultHeaders: { Authorization: `Bearer ${await accessToken()}`, apikey: publishableKey() },
+        dangerouslyAllowBrowser: true,
+      })
+    : new Anthropic({ apiKey: settings.anthropicKey, dangerouslyAllowBrowser: true });
   const date = new Date(meeting.createdAt).toLocaleDateString("de-DE", {
     weekday: "long",
     year: "numeric",
@@ -88,7 +97,7 @@ export async function summarize(meeting: Meeting, settings: Settings): Promise<S
       })
       .finalMessage();
   } catch (e) {
-    if (e instanceof Anthropic.AuthenticationError)
+    if (e instanceof Anthropic.AuthenticationError && !signedIn())
       throw new Error("Anthropic-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
     if (e instanceof Anthropic.RateLimitError)
       throw new Error("Anthropic-Limit erreicht. Bitte in einer Minute erneut versuchen.");

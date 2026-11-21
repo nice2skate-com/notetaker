@@ -1,4 +1,5 @@
 import { clipToWavDataUrl, decode } from "./audio";
+import { accessToken, functionUrl, publishableKey, signedIn } from "./cloud";
 import { getAudio } from "./db";
 import type { Meeting, Settings, Utterance } from "./types";
 
@@ -28,15 +29,22 @@ async function transcribeFile(blob: Blob, settings: Settings, known: KnownSpeake
     form.append("known_speaker_names[]", k.name);
     form.append("known_speaker_references[]", k.ref);
   }
-  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${settings.openaiKey}` },
-    body: form,
-  });
+  // Signed in: the request goes through our server function, which holds the OpenAI key.
+  const res = signedIn()
+    ? await fetch(functionUrl("transcribe"), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${await accessToken()}`, apikey: publishableKey() },
+        body: form,
+      })
+    : await fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${settings.openaiKey}` },
+        body: form,
+      });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    const msg = body?.error?.message || res.statusText;
-    if (res.status === 401) throw new Error("OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
+    const msg = body?.error?.message || body?.message || res.statusText;
+    if (res.status === 401 && !signedIn()) throw new Error("OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
     throw new Error(`Transkription fehlgeschlagen (${res.status}): ${msg}`);
   }
   const json = await res.json();
